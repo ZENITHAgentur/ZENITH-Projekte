@@ -196,6 +196,17 @@ export default function App() {
     setData(p => ({ ...p, fotostudioJobs: p.fotostudioJobs.map(j => j.id === job.id ? updated : j) }));
   };
 
+  // Spiegelt die Schreibaktion des KI-Chats (api/ai-chat.js) in den lokalen
+  // State zurück, damit Listen/Zähler ohne Neuladen aktuell bleiben.
+  const applyAiAction = (action) => {
+    if (!action || !action.row) return;
+    const { type, row } = action;
+    if (type === "create_job") setData(p => ({ ...p, fotostudioJobs: [row, ...p.fotostudioJobs] }));
+    if (type === "update_job") setData(p => ({ ...p, fotostudioJobs: p.fotostudioJobs.map(j => j.id === row.id ? row : j) }));
+    if (type === "create_booking") setData(p => ({ ...p, bookings: [...p.bookings, row].sort((a, b) => a.start_date.localeCompare(b.start_date)) }));
+    if (type === "create_wedding") setData(p => ({ ...p, hochzeiten: [...p.hochzeiten, row] }));
+  };
+
   return (
     <div style={{ minHeight: "100vh", background: Z.bg, fontFamily: FONT_BODY, color: Z.text }}>
       <style>{`
@@ -234,7 +245,7 @@ export default function App() {
 
       <div style={{ maxWidth: PAGE_MAX, margin: "0 auto", padding: "26px 20px 80px" }}>
         {view === "dashboard" && (
-          <Dashboard metrics={metrics} upcomingWeddings={upcomingWeddings} openJobs={openJobs} upcomingBookings={upcomingBookings} loading={loading} onNavigate={setView} />
+          <Dashboard metrics={metrics} upcomingWeddings={upcomingWeddings} openJobs={openJobs} upcomingBookings={upcomingBookings} loading={loading} onNavigate={setView} team={team} onAiAction={applyAiAction} />
         )}
         {view === "hochzeiten" && !weddingUnlocked && (
           <PasswordGate onUnlock={() => setWeddingUnlocked(true)} />
@@ -306,7 +317,7 @@ export default function App() {
       )}
 
       {jobModal && (
-        <JobFormModal mode={jobModal.mode} job={jobModal.job} team={team}
+        <JobFormModal mode={jobModal.mode} job={jobModal.job} team={team} onAiAction={applyAiAction}
           onClose={() => setJobModal(null)}
           onSubmit={async (values) => { await handleSaveJob(values, jobModal.job?.id); setJobModal(null); }} />
       )}
@@ -328,12 +339,14 @@ function NavItem({ active, onClick, icon, label, accent }) {
   );
 }
 
-function Dashboard({ metrics, upcomingWeddings, openJobs, upcomingBookings, loading, onNavigate }) {
+function Dashboard({ metrics, upcomingWeddings, openJobs, upcomingBookings, loading, onNavigate, team, onAiAction }) {
   const d = new Date();
   const weekday = d.toLocaleDateString("de-DE", { weekday: "long" });
   const dateStr = d.toLocaleDateString("de-DE", { day: "2-digit", month: "long", year: "numeric" });
   return (
     <div>
+      <ChatPanel context={{ team }} onAction={onAiAction} />
+
       <div style={{ marginBottom: 24 }}>
         <div style={{ fontSize: 12, color: Z.textSoft, textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 600 }}>{weekday}, {dateStr}</div>
         <div style={{ fontSize: 26, fontWeight: 700, marginTop: 4 }}>Übersicht</div>
@@ -602,6 +615,71 @@ function QuickAddModal({ bereichKey, bereich, boxId, onClose, onSubmit }) {
   );
 }
 
+// ─── KI-Chat ────────────────────────────────────────────────────────────
+// Freitext-Schnittstelle zur Claude-Anbindung (api/ai-chat.js): legt per
+// Werkzeug-Aufruf Jobs/Buchungen/Hochzeiten an bzw. aktualisiert (im
+// Job-Kontext) den aktuellen Job, und beantwortet Auswertungsfragen anhand
+// der live geladenen Daten. "context" transportiert dabei, in welchem
+// Bereich/Job der Chat gerade genutzt wird.
+function ChatPanel({ context, onAction, compact }) {
+  const [messages, setMessages] = useState([]);
+  const [input, setInput] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const send = async () => {
+    const text = input.trim();
+    if (!text || busy) return;
+    setMessages(m => [...m, { role: "user", text }]);
+    setInput("");
+    setBusy(true); setError("");
+    try {
+      const res = await fetch("/api/ai-chat", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: text, context }),
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || "KI-Anfrage fehlgeschlagen");
+      setMessages(m => [...m, { role: "assistant", text: result.reply }]);
+      if (result.action && onAction) onAction(result.action);
+    } catch (e) {
+      setError(e.message);
+    }
+    setBusy(false);
+  };
+
+  return (
+    <div style={{ background: Z.panel, border: `1px solid ${Z.border}`, borderRadius: 14, padding: compact ? 14 : 18, marginBottom: compact ? 0 : 24 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+        <i className="ti ti-sparkles" style={{ fontSize: 16, color: Z.gold }}></i>
+        <div style={{ fontSize: compact ? 12 : 13.5, fontWeight: 700, color: Z.textSoft, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+          {compact ? "KI zu diesem Job" : "KI-Assistent"}
+        </div>
+      </div>
+      {messages.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 10, maxHeight: 220, overflowY: "auto" }}>
+          {messages.map((m, i) => (
+            <div key={i} style={{
+              alignSelf: m.role === "user" ? "flex-end" : "flex-start", maxWidth: "88%",
+              background: m.role === "user" ? Z.gold : Z.panelAlt, color: m.role === "user" ? "#1A1A1A" : Z.text,
+              padding: "8px 12px", borderRadius: 12, fontSize: 13, lineHeight: 1.4, whiteSpace: "pre-wrap",
+            }}>{m.text}</div>
+          ))}
+        </div>
+      )}
+      <div style={{ display: "flex", gap: 8 }}>
+        <input type="text" value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => e.key === "Enter" && send()}
+          placeholder={compact ? "z.B. Status auf Abgeschlossen setzen…" : "Job anlegen oder nach Auswertung fragen…"}
+          style={{ flex: 1, padding: "10px 12px", borderRadius: 9, border: `1.5px solid ${Z.border}`, background: Z.panelAlt, color: Z.text, fontSize: 14, outline: "none" }} />
+        <div onClick={send} style={{ padding: "10px 16px", borderRadius: 9, background: Z.gold, color: "#1A1A1A", fontWeight: 700, fontSize: 13, cursor: busy ? "wait" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", minWidth: 42 }}>
+          {busy ? "…" : <i className="ti ti-send" style={{ fontSize: 15, color: "#000" }}></i>}
+        </div>
+      </div>
+      {error && <div style={{ color: Z.danger, fontSize: 12, marginTop: 8 }}>{error}</div>}
+    </div>
+  );
+}
+
 function FieldLabel({ children }) {
   return <div style={{ fontSize: 11, fontWeight: 700, color: Z.textSoft, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 6 }}>{children}</div>;
 }
@@ -626,7 +704,7 @@ function ChipSelect({ options, selected, onToggle, accent = Z.gold }) {
 // Eigenes, reicheres Formular (statt der generischen Schnelleingabe), da hier
 // die volle Fachlogik der alten Jobliste nachgebildet wird: Status-Pipeline,
 // Projekttyp/Kategorien, Personen-Zuordnung, Shooting-Zeitraum, Ort.
-function JobFormModal({ mode, job, team, onClose, onSubmit }) {
+function JobFormModal({ mode, job, team, onAiAction, onClose, onSubmit }) {
   const [v, setV] = useState(() => mode === "edit" && job ? {
     name: job.name || "", status: job.status || "Neu", prio: job.prio || "Mittel", aufwand: job.aufwand || "Mittel",
     ort: job.ort || "Im Haus", personen: Array.isArray(job.personen) ? job.personen : [],
@@ -640,6 +718,13 @@ function JobFormModal({ mode, job, team, onClose, onSubmit }) {
   const toggleIn = (k, item) => setV(p => ({ ...p, [k]: p[k].includes(item) ? p[k].filter(x => x !== item) : [...p[k], item] }));
 
   const kategorienOptions = PROJEKTTYP_CFG[v.projekttyp]?.kategorien || [];
+
+  const handleChatAction = (action) => {
+    onAiAction && onAiAction(action);
+    if (action.type === "update_job" && action.row) {
+      setV(p => ({ ...p, status: action.row.status ?? p.status, notizen: action.row.notizen ?? p.notizen }));
+    }
+  };
 
   const handleSubmit = async () => {
     if (!v.name.trim()) { setError("Jobname / Kunde fehlt"); return; }
@@ -678,6 +763,10 @@ function JobFormModal({ mode, job, team, onClose, onSubmit }) {
                 ))}
               </div>
             </div>
+          )}
+
+          {mode === "edit" && job && (
+            <ChatPanel compact context={{ bereich: "fotostudio", jobId: job.id, job: { name: v.name, status: v.status, date: v.date, abgabe: v.abgabe }, team }} onAction={handleChatAction} />
           )}
 
           <div>
