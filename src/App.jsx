@@ -143,6 +143,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState({ hochzeiten: [], fotostudioJobs: [], bookings: [], boxes: [] });
   const [team, setTeam] = useState([]);
+  const [absences, setAbsences] = useState([]);
   const [weddingUnlocked, setWeddingUnlocked] = useState(() => {
     try { return sessionStorage.getItem("zp-wedding-unlocked") === "1"; } catch { return false; }
   });
@@ -221,12 +222,13 @@ export default function App() {
     if (!appUnlocked) return;
     let cancelled = false;
     async function load() {
-      const [hz, js, fb, boxes, core] = await Promise.all([
+      const [hz, js, fb, boxes, core, abs] = await Promise.all([
         supabase.from("hz_hochzeiten").select("id,data,created_at"),
         supabase.from("js_jobs").select(JOB_FIELDS).order("created_at", { ascending: false }),
         supabase.from("fb_bookings").select("id,title,location,start_date,end_date,status").order("start_date", { ascending: true }),
         supabase.from("fb_boxes").select("id,name"),
         supabase.from("core_team").select("name").order("name", { ascending: true }),
+        supabase.from("js_absences").select("*").order("start_date", { ascending: true }),
       ]);
       if (cancelled) return;
       setData({
@@ -236,6 +238,7 @@ export default function App() {
         boxes: boxes.data || [],
       });
       setTeam((core.data || []).map(t => t.name));
+      setAbsences(abs.data || []);
       setLoading(false);
     }
     load();
@@ -371,6 +374,18 @@ export default function App() {
     handleReorderJobs(ids);
   };
 
+  // Abwesenheiten (für die Team-Verfügbarkeit): einfache Zeiträume pro Person.
+  const handleAddAbsence = async (person, startDate, endDate) => {
+    const { data: created, error } = await supabase.from("js_absences").insert([{ person, start_date: startDate, end_date: endDate }]).select().single();
+    if (error) { showToast("Abwesenheit konnte nicht gespeichert werden: " + error.message, false); return; }
+    setAbsences(p => [...p, created]);
+  };
+  const handleRemoveAbsence = async (id) => {
+    const { error } = await supabase.from("js_absences").delete().eq("id", id);
+    if (error) { showToast("Abwesenheit konnte nicht entfernt werden: " + error.message, false); return; }
+    setAbsences(p => p.filter(a => a.id !== id));
+  };
+
   // Jobs, die die KI-Erfassung (api/parse-input.js, ChatCapture im "Neuer
   // Job"-Formular) aus Freitext/Diktat/Foto/PDF/Excel direkt angelegt hat.
   const handleChatJobsCreated = (jobs) => {
@@ -441,6 +456,7 @@ export default function App() {
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 14, marginBottom: 14 }}>
             <TodayDropPanel jobs={openJobs} onOpen={j => setJobModal({ mode: "edit", job: j })} onDropJob={handleScheduleToday} />
             <KalenderWidget jobs={openJobs} onOpen={j => setJobModal({ mode: "edit", job: j })} />
+            <TeamAvailabilityWidget teamNames={team} jobs={openJobs} absences={absences} onAddAbsence={handleAddAbsence} onRemoveAbsence={handleRemoveAbsence} />
           </div>
           <div style={{ marginBottom: 18 }}>
             <StudioOccupancyWidget jobs={openJobs} onOpen={j => setJobModal({ mode: "edit", job: j })} />
@@ -919,6 +935,107 @@ function StudioOccupancyWidget({ jobs, onOpen }) {
         <div style={{ maxWidth: 820, margin: "0 auto" }}>
           <StudioFloorplan occupied={occupied} onZoneClick={onOpen} height={560} />
         </div>
+      )}
+    </div>
+  );
+}
+
+function isAbsentOn(absences, person, iso) {
+  return absences.some(a => a.person === person && a.start_date <= iso && iso <= a.end_date);
+}
+
+// ─── Team-Verfügbarkeit: zeigt für jede Person Heute/Morgen/Übermorgen, ob sie
+// abwesend, auf einen Job gebucht oder frei ist - plus Abwesenheiten eintragen.
+function TeamAvailabilityWidget({ teamNames, jobs, absences, onAddAbsence, onRemoveAbsence }) {
+  const [open, setOpen] = useState(true);
+  const [showForm, setShowForm] = useState(false);
+  const [formPerson, setFormPerson] = useState(teamNames[0] || "");
+  const [formStart, setFormStart] = useState(today());
+  const [formEnd, setFormEnd] = useState(today());
+
+  const days = [0, 1, 2].map(n => addDays(new Date(), n));
+  const dayLabels = ["Heute", "Morgen", "Übermorgen"];
+  const jobsFor = (person, iso) => jobs.filter(j => j.date === iso && Array.isArray(j.personen) && j.personen.includes(person));
+  const activeAbsences = absences.filter(a => a.end_date >= today()).sort((a, b) => a.start_date.localeCompare(b.start_date));
+
+  const submitAbsence = async () => {
+    if (!formPerson || !formStart || !formEnd) return;
+    await onAddAbsence(formPerson, formStart, formEnd);
+    setShowForm(false);
+  };
+
+  return (
+    <div style={{ background: Z.panel, border: `1px solid ${Z.border}`, borderRadius: 14, padding: "12px 14px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: open ? 10 : 0 }}>
+        <i className="ti ti-users" style={{ fontSize: 15, color: Z.gold }}></i>
+        <div style={{ fontSize: 12, fontWeight: 800, color: Z.textSoft, textTransform: "uppercase", letterSpacing: "0.04em" }}>Team-Verfügbarkeit</div>
+        <i className={`ti ${open ? "ti-chevron-up" : "ti-chevron-down"}`} onClick={() => setOpen(o => !o)} style={{ marginLeft: "auto", cursor: "pointer", color: Z.textSoft, fontSize: 15 }}></i>
+      </div>
+      {open && (
+        teamNames.length === 0 ? (
+          <div style={{ fontSize: 12.5, color: Z.textFaint }}>Noch keine Teammitglieder.</div>
+        ) : (
+          <>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 28px 28px 28px", gap: 4, marginBottom: 4 }}>
+              <div />
+              {dayLabels.map(l => <div key={l} title={l} style={{ textAlign: "center", fontSize: 8.5, fontWeight: 700, color: Z.textFaint, textTransform: "uppercase" }}>{l.slice(0, 2)}</div>)}
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+              {teamNames.map(person => (
+                <div key={person} style={{ display: "grid", gridTemplateColumns: "1fr 28px 28px 28px", gap: 4, alignItems: "center" }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{person}</div>
+                  {days.map(d => {
+                    const iso = toISO(d);
+                    const absent = isAbsentOn(absences, person, iso);
+                    const booked = jobsFor(person, iso);
+                    const cell = absent
+                      ? { bg: Z.panelAlt, color: Z.textFaint, icon: "ti-moon", title: "Abwesend" }
+                      : booked.length > 0
+                        ? { bg: "rgba(79,156,219,0.18)", color: "#4F9CDB", icon: "ti-camera", title: booked.map(j => j.name).join(", ") }
+                        : { bg: "rgba(74,222,128,0.15)", color: "#4ADE80", icon: "ti-check", title: "Verfügbar" };
+                    return (
+                      <div key={iso} title={`${person} · ${cell.title}`} style={{ width: 22, height: 22, borderRadius: 6, background: cell.bg, color: cell.color, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto" }}>
+                        <i className={`ti ${cell.icon}`} style={{ fontSize: 11 }}></i>
+                      </div>
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+
+            {activeAbsences.length > 0 && (
+              <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 4 }}>
+                {activeAbsences.map(a => (
+                  <div key={a.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 11, color: Z.textSoft }}>
+                    <span>{a.person}: {fmtDate(a.start_date)}–{fmtDate(a.end_date)}</span>
+                    <i className="ti ti-x" onClick={() => onRemoveAbsence(a.id)} style={{ cursor: "pointer", color: Z.danger }}></i>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {showForm ? (
+              <div style={{ marginTop: 10, padding: 8, background: Z.panelAlt, borderRadius: 8, display: "flex", flexDirection: "column", gap: 6 }}>
+                <select value={formPerson} onChange={e => setFormPerson(e.target.value)} style={{ padding: "6px 8px", fontSize: 12, borderRadius: 6, border: `1px solid ${Z.border}`, background: Z.panel, color: Z.text }}>
+                  {teamNames.map(p => <option key={p} value={p}>{p}</option>)}
+                </select>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <input type="date" value={formStart} onChange={e => setFormStart(e.target.value)} style={{ padding: "6px 8px", fontSize: 12, borderRadius: 6, border: `1px solid ${Z.border}`, background: Z.panel, color: Z.text, flex: 1 }} />
+                  <input type="date" value={formEnd} onChange={e => setFormEnd(e.target.value)} style={{ padding: "6px 8px", fontSize: 12, borderRadius: 6, border: `1px solid ${Z.border}`, background: Z.panel, color: Z.text, flex: 1 }} />
+                </div>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <div onClick={() => setShowForm(false)} style={{ flex: 1, textAlign: "center", padding: "6px", borderRadius: 6, background: Z.panel, border: `1px solid ${Z.border}`, fontSize: 11, fontWeight: 700, color: Z.textSoft, cursor: "pointer" }}>Abbrechen</div>
+                  <div onClick={submitAbsence} style={{ flex: 1, textAlign: "center", padding: "6px", borderRadius: 6, background: Z.gold, color: "#1A1A1A", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>Eintragen</div>
+                </div>
+              </div>
+            ) : (
+              <div onClick={() => { setFormPerson(teamNames[0] || ""); setFormStart(today()); setFormEnd(today()); setShowForm(true); }}
+                style={{ marginTop: 8, fontSize: 11, fontWeight: 700, color: Z.textSoft, cursor: "pointer" }}>
+                <i className="ti ti-plus" style={{ fontSize: 11, marginRight: 4 }}></i>Abwesenheit eintragen
+              </div>
+            )}
+          </>
+        )
       )}
     </div>
   );
