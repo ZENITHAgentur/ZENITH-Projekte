@@ -62,8 +62,19 @@ const PROJEKTTYP_CFG = {
 const EMPTY_JOB_FORM = {
   name: "", status: "Neu", prio: "Mittel", aufwand: "Mittel", ort: "Im Haus",
   personen: [], date: "", date_end: "", dauer: "", abgabe: "", kontakt: "", notizen: "",
-  projekttyp: "Fotografie", kategorien: [], attachments: [], stationen: [],
+  projekttyp: "Fotografie", kategorien: [], attachments: [], stationen: [], equipment: [],
 };
+
+// Equipment-Katalog (Kameras, Objektive & Co.) - geräteübergreifend im Browser
+// gepflegt, wie in der alten Fotostudio-Jobliste, damit er nicht pro Job neu
+// eingetippt werden muss.
+const EQUIPMENT_STORAGE_KEY = "zp-equipment-katalog";
+function loadEquipmentCatalog() {
+  try { return JSON.parse(localStorage.getItem(EQUIPMENT_STORAGE_KEY) || "[]"); } catch { return []; }
+}
+function saveEquipmentCatalog(list) {
+  try { localStorage.setItem(EQUIPMENT_STORAGE_KEY, JSON.stringify(list)); } catch {}
+}
 
 // Studio-Grundriss (Aufnahmeplätze), aus der alten Fotostudio-Jobliste übernommen.
 const STUDIO_ZONES = [
@@ -161,7 +172,7 @@ export default function App() {
   useEffect(() => { try { localStorage.setItem("zp-foto-view", fotoView); } catch {} }, [fotoView]);
   useEffect(() => { try { localStorage.setItem("zp-foto-groupby", groupBy); } catch {} }, [groupBy]);
 
-  const JOB_FIELDS = "id,name,status,date,date_end,abgabe,dauer,prio,aufwand,kontakt,notizen,projekttyp,kategorien,personen,ort,bereich,attachments,stationen,sort_order";
+  const JOB_FIELDS = "id,name,status,date,date_end,abgabe,dauer,prio,aufwand,kontakt,notizen,projekttyp,kategorien,personen,ort,bereich,attachments,stationen,sort_order,equipment";
   const [toast, setToast] = useState(null);
   const showToast = (msg, ok = true) => {
     setToast({ msg, ok });
@@ -311,6 +322,7 @@ export default function App() {
       abgabe: values.abgabe || null, kontakt: values.kontakt || "", notizen: values.notizen || "",
       projekttyp: values.projekttyp || "Fotografie", kategorien: values.kategorien || [], attachments: values.attachments || [],
       stationen: values.ort === "Außer Haus" ? [] : (values.stationen || []),
+      equipment: values.equipment || [],
     };
     if (existingId) {
       const vorher = data.fotostudioJobs.find(j => j.id === existingId);
@@ -461,18 +473,18 @@ export default function App() {
           <div style={{ marginBottom: 18 }}>
             <StudioOccupancyWidget jobs={openJobs} onOpen={j => setJobModal({ mode: "edit", job: j })} />
           </div>
-          <SearchBox value={fotoSearch} onChange={setFotoSearch} placeholder="Suche nach Name, Kontakt, Notiz, Person…" />
+          {fotoView !== "equipment" && <SearchBox value={fotoSearch} onChange={setFotoSearch} placeholder="Suche nach Name, Kontakt, Notiz, Person…" />}
 
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
             <div style={{ display: "flex", background: Z.panelAlt, borderRadius: 8, overflow: "hidden" }}>
-              {[["liste", "ti-list", "Liste"], ["board", "ti-layout-kanban", "Board"]].map(([key, icon, label]) => (
+              {[["liste", "ti-list", "Liste"], ["board", "ti-layout-kanban", "Board"], ["equipment", "ti-tools", "Equipment"]].map(([key, icon, label]) => (
                 <div key={key} onClick={() => setFotoView(key)}
                   style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 13px", cursor: "pointer", fontSize: 12.5, fontWeight: 700, background: fotoView === key ? Z.gold : "transparent", color: fotoView === key ? "#1A1A1A" : Z.textSoft }}>
                   <i className={`ti ${icon}`} style={{ fontSize: 14 }}></i>{label}
                 </div>
               ))}
             </div>
-            {fotoView === "board" ? (
+            {fotoView === "board" && (
               <div style={{ display: "flex", background: Z.panelAlt, borderRadius: 8, overflow: "hidden" }}>
                 {[["prio", "Priorität"], ["aufwand", "Aufwand"]].map(([key, label]) => (
                   <div key={key} onClick={() => setGroupBy(key)}
@@ -481,7 +493,8 @@ export default function App() {
                   </div>
                 ))}
               </div>
-            ) : (
+            )}
+            {fotoView === "liste" && (
               <div onClick={() => { setSortMode(s => { const next = !s; if (next) showToast("Sortier-Modus an – Jobs per Ziehen neu anordnen"); return next; }); }}
                 style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 13px", borderRadius: 8, cursor: "pointer", fontSize: 12.5, fontWeight: 700, background: sortMode ? Z.gold : Z.panelAlt, color: sortMode ? "#1A1A1A" : Z.textSoft }}>
                 <i className="ti ti-arrows-sort" style={{ fontSize: 14 }}></i>{sortMode ? "Fertig" : "Sortierung bearbeiten"}
@@ -489,9 +502,13 @@ export default function App() {
             )}
           </div>
 
-          {fotoView === "board" ? (
+          {fotoView === "board" && (
             <BoardView jobs={visibleFotoJobs} groupBy={groupBy} onOpen={j => setJobModal({ mode: "edit", job: j })} onChangeGroup={(id, val) => handleChangeGroupValue(id, groupBy, val)} />
-          ) : (
+          )}
+          {fotoView === "equipment" && (
+            <EquipmentView jobs={openJobs} onJobClick={j => setJobModal({ mode: "edit", job: j })} />
+          )}
+          {fotoView === "liste" && (
             <ListPreview title="Offene Jobs" empty={fotoSearch ? "Keine Treffer für diese Suche." : "Keine offenen Jobs."} accent={BEREICH_BY_KEY.fotostudio.accent}>
               {visibleFotoJobs.map(j => (
                 <JobRow key={j.id} job={j} onOpen={() => setJobModal({ mode: "edit", job: j })} onAdvance={() => handleStatusAdvance(j)} sortMode={sortMode} onReorder={handleDragReorder} />
@@ -1212,6 +1229,89 @@ function BoardCard({ job, dragging, onOpen, onDragStart, onDragEnd }) {
   );
 }
 
+// ─── Equipment-Planung: Katalog pflegen, Jobs zuweisen, Terminkonflikte
+// (gleiches Gerät an zwei Jobs am selben Tag) automatisch erkennen. ────────
+function EquipmentView({ jobs, onJobClick }) {
+  const [catalog, setCatalog] = useState(() => loadEquipmentCatalog());
+  const [newItem, setNewItem] = useState("");
+
+  const addItem = () => {
+    const name = newItem.trim();
+    if (!name || catalog.includes(name)) return;
+    const next = [...catalog, name];
+    setCatalog(next);
+    saveEquipmentCatalog(next);
+    setNewItem("");
+  };
+  const removeItem = (name) => {
+    const next = catalog.filter(x => x !== name);
+    setCatalog(next);
+    saveEquipmentCatalog(next);
+  };
+
+  const assignments = catalog.map(item => {
+    const assigned = jobs.filter(j => Array.isArray(j.equipment) && j.equipment.includes(item));
+    const dateCounts = {};
+    assigned.forEach(j => { if (j.date) dateCounts[j.date] = (dateCounts[j.date] || 0) + 1; });
+    const conflictDates = Object.entries(dateCounts).filter(([, n]) => n > 1).map(([d]) => d);
+    return { item, assigned, conflictDates };
+  });
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <div style={{ background: Z.panel, border: `1px solid ${Z.border}`, borderRadius: 14, padding: 14 }}>
+        <div style={{ fontSize: 12, fontWeight: 800, color: Z.textSoft, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 10 }}>Equipment-Katalog</div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <input value={newItem} onChange={e => setNewItem(e.target.value)} onKeyDown={e => e.key === "Enter" && addItem()}
+            placeholder="z.B. Kamera Sony A7 IV"
+            style={{ flex: 1, padding: "9px 12px", borderRadius: 9, border: `1.5px solid ${Z.border}`, background: Z.panelAlt, color: Z.text, fontSize: 14 }} />
+          <div onClick={addItem} style={{ display: "flex", alignItems: "center", gap: 5, padding: "9px 14px", borderRadius: 8, background: Z.gold, color: "#1A1A1A", fontWeight: 700, fontSize: 13, cursor: "pointer", flexShrink: 0 }}>
+            <i className="ti ti-plus" style={{ fontSize: 14 }}></i>Hinzufügen
+          </div>
+        </div>
+      </div>
+
+      {catalog.length === 0 ? (
+        <div style={{ textAlign: "center", padding: "60px 20px", color: Z.textFaint }}>
+          <i className="ti ti-tools" style={{ fontSize: 44, display: "block", marginBottom: 12, color: Z.textFaint }}></i>
+          <div style={{ fontSize: 15, fontWeight: 600, color: Z.text }}>Noch kein Equipment eingetragen</div>
+          <div style={{ fontSize: 13, marginTop: 6, maxWidth: 420, margin: "6px auto 0" }}>Trag oben eure Kameras, Objektive &amp; Co. ein, um sie Jobs zuzuweisen und Terminkonflikte automatisch zu erkennen.</div>
+        </div>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 12, alignItems: "start" }}>
+          {assignments.map(({ item, assigned, conflictDates }) => (
+            <div key={item} style={{ background: Z.panel, borderRadius: 12, padding: 12, border: `1.5px solid ${conflictDates.length ? Z.danger : Z.border}` }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                <div style={{ fontSize: 13, fontWeight: 800, flex: 1 }}>{item}</div>
+                {conflictDates.length > 0 && (
+                  <span style={{ fontSize: 10, fontWeight: 700, color: Z.danger, background: "rgba(224,96,122,0.15)", padding: "2px 8px", borderRadius: 10 }}>Doppelbelegung</span>
+                )}
+                <i className="ti ti-x" onClick={() => removeItem(item)} style={{ cursor: "pointer", color: Z.textFaint, fontSize: 14 }}></i>
+              </div>
+              {assigned.length === 0 ? (
+                <div style={{ fontSize: 12, color: Z.textFaint }}>Aktuell keinem Job zugeordnet</div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                  {assigned.slice().sort((a, b) => (a.date || "").localeCompare(b.date || "")).map(job => {
+                    const conflict = job.date && conflictDates.includes(job.date);
+                    return (
+                      <div key={job.id} onClick={() => onJobClick(job)}
+                        style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 9px", borderRadius: 8, background: conflict ? "rgba(224,96,122,0.12)" : Z.panelAlt, cursor: "pointer" }}>
+                        <span style={{ fontSize: 12, fontWeight: 600, flex: 1 }}>{job.name}</span>
+                        <span style={{ fontSize: 11, color: conflict ? Z.danger : Z.textSoft, fontWeight: conflict ? 700 : 500 }}>{job.date ? fmtDate(job.date) : "ohne Termin"}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Job-Zeile Foto-/Videoproduktion ───────────────────────────────────────
 // Klick auf die Zeile öffnet die Detailansicht, Klick auf den Status-Pill
 // schaltet den Status direkt weiter (häufigster Alltags-Workflow).
@@ -1604,6 +1704,7 @@ function JobFormModal({ mode, job, team, onAiAction, onChatJobsCreated, onClose,
     kontakt: job.kontakt || "", notizen: job.notizen || "", projekttyp: job.projekttyp || "Fotografie",
     kategorien: Array.isArray(job.kategorien) ? job.kategorien : [], attachments: Array.isArray(job.attachments) ? job.attachments : [],
     stationen: Array.isArray(job.stationen) ? job.stationen : [],
+    equipment: Array.isArray(job.equipment) ? job.equipment : [],
   } : EMPTY_JOB_FORM);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -1611,6 +1712,17 @@ function JobFormModal({ mode, job, team, onAiAction, onChatJobsCreated, onClose,
   const toggleIn = (k, item) => setV(p => ({ ...p, [k]: p[k].includes(item) ? p[k].filter(x => x !== item) : [...p[k], item] }));
 
   const kategorienOptions = PROJEKTTYP_CFG[v.projekttyp]?.kategorien || [];
+
+  const [equipmentCatalog, setEquipmentCatalog] = useState(() => loadEquipmentCatalog());
+  const [newEquipment, setNewEquipment] = useState("");
+  const toggleEquipment = (name) => toggleIn("equipment", name);
+  const addCustomEquipment = () => {
+    const name = newEquipment.trim();
+    if (!name) return;
+    if (!equipmentCatalog.includes(name)) { const next = [...equipmentCatalog, name]; setEquipmentCatalog(next); saveEquipmentCatalog(next); }
+    setV(p => (p.equipment.includes(name) ? p : { ...p, equipment: [...p.equipment, name] }));
+    setNewEquipment("");
+  };
 
   const handleChatAction = (action) => {
     onAiAction && onAiAction(action);
@@ -1752,6 +1864,22 @@ function JobFormModal({ mode, job, team, onAiAction, onChatJobsCreated, onClose,
           <div>
             <FieldLabel>Kategorien</FieldLabel>
             <ChipSelect options={kategorienOptions} selected={v.kategorien} onToggle={k => toggleIn("kategorien", k)} accent={BEREICH_BY_KEY.fotostudio.accent} />
+          </div>
+
+          <div>
+            <FieldLabel>Equipment</FieldLabel>
+            {equipmentCatalog.length > 0 && (
+              <div style={{ marginBottom: 8 }}>
+                <ChipSelect options={equipmentCatalog} selected={v.equipment} onToggle={toggleEquipment} accent={BEREICH_BY_KEY.fotostudio.accent} />
+              </div>
+            )}
+            <div style={{ display: "flex", gap: 8 }}>
+              <input type="text" value={newEquipment} onChange={e => setNewEquipment(e.target.value)} onKeyDown={e => e.key === "Enter" && (e.preventDefault(), addCustomEquipment())}
+                placeholder="z.B. Kamera Sony A7 IV" style={{ ...inputStyle, flex: 1 }} />
+              <div onClick={addCustomEquipment} style={{ display: "flex", alignItems: "center", gap: 5, padding: "0 14px", borderRadius: 8, background: Z.panelAlt, border: `1px solid ${Z.border}`, color: Z.text, fontWeight: 700, fontSize: 13, cursor: "pointer", flexShrink: 0 }}>
+                <i className="ti ti-plus" style={{ fontSize: 13, color: "#1A1A1A", background: Z.gold, borderRadius: "50%", padding: 2 }}></i>Hinzufügen
+              </div>
+            </div>
           </div>
 
           <div>
