@@ -108,6 +108,9 @@ export default function App() {
   const [weddingUnlocked, setWeddingUnlocked] = useState(() => {
     try { return sessionStorage.getItem("zp-wedding-unlocked") === "1"; } catch { return false; }
   });
+  const [appUnlocked, setAppUnlocked] = useState(() => {
+    try { return sessionStorage.getItem("zp-app-unlocked") === "1"; } catch { return false; }
+  });
   const [quickAddTarget, setQuickAddTarget] = useState(null);
   const [jobModal, setJobModal] = useState(null);
   const [addPickerOpen, setAddPickerOpen] = useState(false);
@@ -115,6 +118,7 @@ export default function App() {
   const JOB_FIELDS = "id,name,status,date,date_end,abgabe,dauer,prio,aufwand,kontakt,notizen,projekttyp,kategorien,personen,ort,bereich";
 
   useEffect(() => {
+    if (!appUnlocked) return;
     let cancelled = false;
     async function load() {
       const [hz, js, fb, boxes, core] = await Promise.all([
@@ -136,7 +140,7 @@ export default function App() {
     }
     load();
     return () => { cancelled = true; };
-  }, []);
+  }, [appUnlocked]);
 
   const t = today();
   const upcomingWeddings = data.hochzeiten
@@ -207,20 +211,24 @@ export default function App() {
     if (type === "create_wedding") setData(p => ({ ...p, hochzeiten: [...p.hochzeiten, row] }));
   };
 
+  // Die gesamte App ist passwortgeschützt (api/check-app-password.js), damit
+  // sie nicht öffentlich unter der Vercel-URL einsehbar ist. Erst danach wird
+  // überhaupt geladen/gerendert - die eigentlichen Daten bleiben bis dahin unangetastet.
+  if (!appUnlocked) {
+    return (
+      <div style={{ minHeight: "100vh", background: Z.bg, fontFamily: FONT_BODY, color: Z.text, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 20 }}>
+        <GlobalStyle />
+        <img src={LOGO_B64} alt="ZENITH" style={{ height: 34, width: "auto", objectFit: "contain", marginBottom: 28 }} />
+        <PasswordGate endpoint="/api/check-app-password" storageKey="zp-app-unlocked" accent={Z.gold}
+          title="Geschützter Bereich" text="Diese App ist passwortgeschützt. Bitte Passwort eingeben, um fortzufahren."
+          onUnlock={() => setAppUnlocked(true)} />
+      </div>
+    );
+  }
+
   return (
     <div style={{ minHeight: "100vh", background: Z.bg, fontFamily: FONT_BODY, color: Z.text }}>
-      <style>{`
-        * { box-sizing: border-box; }
-        body { margin: 0; }
-        .zp-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
-        @media (min-width: 640px) { .zp-grid { grid-template-columns: repeat(3, 1fr); } }
-        @media (min-width: 1000px) { .zp-grid { grid-template-columns: repeat(5, 1fr); } }
-        .zp-nav-label { display: block; }
-        @media (max-width: 640px) { .zp-nav-label { display: none; } }
-        .zp-card:hover { border-color: rgba(255,255,255,0.16) !important; }
-        input, select { font-family: ${FONT_BODY}; }
-        ::placeholder { color: ${Z.textFaint}; }
-      `}</style>
+      <GlobalStyle />
 
       {/* ── Header ── */}
       <div style={{ background: "#0C0C0D", borderBottom: `1px solid ${Z.border}` }}>
@@ -248,7 +256,9 @@ export default function App() {
           <Dashboard metrics={metrics} upcomingWeddings={upcomingWeddings} openJobs={openJobs} upcomingBookings={upcomingBookings} loading={loading} onNavigate={setView} team={team} onAiAction={applyAiAction} />
         )}
         {view === "hochzeiten" && !weddingUnlocked && (
-          <PasswordGate onUnlock={() => setWeddingUnlocked(true)} />
+          <PasswordGate endpoint="/api/check-wedding-password" storageKey="zp-wedding-unlocked" accent={BEREICH_BY_KEY.hochzeiten.accent}
+            title="Geschützter Bereich" text="Der Hochzeiten-Bereich ist passwortgeschützt. Bitte Passwort eingeben, um fortzufahren."
+            onUnlock={() => setWeddingUnlocked(true)} />
         )}
         {view === "fotostudio" && <BereichPage bereich={BEREICH_BY_KEY.fotostudio} loading={loading} onAdd={() => setJobModal({ mode: "new" })}>
           <ListPreview title="Offene Jobs" empty="Keine offenen Jobs." accent={BEREICH_BY_KEY.fotostudio.accent}>
@@ -322,6 +332,23 @@ export default function App() {
           onSubmit={async (values) => { await handleSaveJob(values, jobModal.job?.id); setJobModal(null); }} />
       )}
     </div>
+  );
+}
+
+function GlobalStyle() {
+  return (
+    <style>{`
+      * { box-sizing: border-box; }
+      body { margin: 0; }
+      .zp-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+      @media (min-width: 640px) { .zp-grid { grid-template-columns: repeat(3, 1fr); } }
+      @media (min-width: 1000px) { .zp-grid { grid-template-columns: repeat(5, 1fr); } }
+      .zp-nav-label { display: block; }
+      @media (max-width: 640px) { .zp-nav-label { display: none; } }
+      .zp-card:hover { border-color: rgba(255,255,255,0.16) !important; }
+      input, select { font-family: ${FONT_BODY}; }
+      ::placeholder { color: ${Z.textFaint}; }
+    `}</style>
   );
 }
 
@@ -488,13 +515,13 @@ function JobRow({ job, onOpen, onAdvance }) {
   );
 }
 
-// ─── Passwortschutz für den Hochzeiten-Bereich ─────────────────────────────
-// Die Übersichtsseite zeigt anstehende Hochzeiten bewusst weiterhin offen an
-// (siehe Dashboard) - nur der eigentliche Bereich mit allen Details ist
-// gesperrt, damit externe Umsetzer keinen Zugriff auf Kundendaten/Preise haben.
-// Der Vergleich läuft serverseitig (api/check-wedding-password.js), damit das
-// Passwort nicht im Client-Bundle sichtbar ist.
-function PasswordGate({ onUnlock }) {
+// ─── Passwortschutz (App-weit & Hochzeiten-Bereich) ────────────────────────
+// Generische Passwortsperre, serverseitig geprüft (api/check-*-password.js),
+// damit das jeweilige Passwort nie im Client-Bundle sichtbar ist. Wird zweimal
+// genutzt: einmal für die gesamte App (endpoint/storageKey "app") und einmal
+// speziell für den Hochzeiten-Bereich, damit externe Umsetzer zwar die App,
+// aber keine Kundendaten/Preise der Hochzeiten sehen.
+function PasswordGate({ endpoint, storageKey, accent, title, text, onUnlock }) {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -503,12 +530,12 @@ function PasswordGate({ onUnlock }) {
     if (!password) return;
     setBusy(true); setError("");
     try {
-      const res = await fetch("/api/check-wedding-password", {
+      const res = await fetch(endpoint, {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password }),
       });
       const result = await res.json();
       if (!res.ok || !result.ok) throw new Error(result.error || "Falsches Passwort");
-      try { sessionStorage.setItem("zp-wedding-unlocked", "1"); } catch {}
+      try { sessionStorage.setItem(storageKey, "1"); } catch {}
       onUnlock();
     } catch (e) {
       setError(e.message);
@@ -518,13 +545,11 @@ function PasswordGate({ onUnlock }) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", padding: "60px 20px" }}>
-      <div style={{ width: 54, height: 54, borderRadius: "50%", border: `1.5px solid ${BEREICH_BY_KEY.hochzeiten.accent}`, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 16 }}>
-        <i className="ti ti-lock" style={{ fontSize: 24, color: BEREICH_BY_KEY.hochzeiten.accent }}></i>
+      <div style={{ width: 54, height: 54, borderRadius: "50%", border: `1.5px solid ${accent}`, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 16 }}>
+        <i className="ti ti-lock" style={{ fontSize: 24, color: accent }}></i>
       </div>
-      <div style={{ fontSize: 19, fontWeight: 700 }}>Geschützter Bereich</div>
-      <div style={{ fontSize: 13.5, color: Z.textSoft, marginTop: 6, maxWidth: 360 }}>
-        Der Hochzeiten-Bereich ist passwortgeschützt. Bitte Passwort eingeben, um fortzufahren.
-      </div>
+      <div style={{ fontSize: 19, fontWeight: 700 }}>{title}</div>
+      <div style={{ fontSize: 13.5, color: Z.textSoft, marginTop: 6, maxWidth: 360 }}>{text}</div>
       <div style={{ display: "flex", gap: 8, marginTop: 22, width: "100%", maxWidth: 300 }}>
         <input type="password" value={password} onChange={e => setPassword(e.target.value)}
           onKeyDown={e => e.key === "Enter" && submit()} placeholder="Passwort" autoFocus
