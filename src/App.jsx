@@ -382,9 +382,11 @@ export default function App() {
             onUnlock={() => setWeddingUnlocked(true)} />
         )}
         {view === "fotostudio" && <BereichPage bereich={BEREICH_BY_KEY.fotostudio} loading={loading} onAdd={() => setJobModal({ mode: "new" })}>
-          <div className="zp-grid" style={{ marginBottom: 18 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 14, marginBottom: 14 }}>
             <TodayDropPanel jobs={openJobs} onOpen={j => setJobModal({ mode: "edit", job: j })} onDropJob={handleScheduleToday} />
             <KalenderWidget jobs={openJobs} onOpen={j => setJobModal({ mode: "edit", job: j })} />
+          </div>
+          <div style={{ marginBottom: 18 }}>
             <StudioOccupancyWidget jobs={openJobs} onOpen={j => setJobModal({ mode: "edit", job: j })} />
           </div>
           <SearchBox value={fotoSearch} onChange={setFotoSearch} placeholder="Suche nach Name, Kontakt, Notiz, Person…" />
@@ -826,7 +828,11 @@ function StudioOccupancyWidget({ jobs, onOpen }) {
         <div style={{ fontSize: 12, fontWeight: 800, color: Z.textSoft, textTransform: "uppercase", letterSpacing: "0.04em" }}>Studio · Heute</div>
         <i className={`ti ${openPanel ? "ti-chevron-up" : "ti-chevron-down"}`} onClick={() => setOpenPanel(o => !o)} style={{ marginLeft: "auto", cursor: "pointer", color: Z.textSoft, fontSize: 15 }}></i>
       </div>
-      {openPanel && <StudioFloorplan occupied={occupied} onZoneClick={onOpen} height={280} />}
+      {openPanel && (
+        <div style={{ maxWidth: 820, margin: "0 auto" }}>
+          <StudioFloorplan occupied={occupied} onZoneClick={onOpen} height={560} />
+        </div>
+      )}
     </div>
   );
 }
@@ -1355,7 +1361,7 @@ function JobFormModal({ mode, job, team, onAiAction, onChatJobsCreated, onClose,
             <div>
               <FieldLabel>Aufnahmeplatz im Studio</FieldLabel>
               <div style={{ background: Z.panelAlt, border: `1px solid ${Z.border}`, borderRadius: 10, padding: 10 }}>
-                <StudioFloorplan selected={v.stationen} onToggleZone={id => toggleIn("stationen", id)} height={220} />
+                <StudioFloorplan selected={v.stationen} onToggleZone={id => toggleIn("stationen", id)} height={320} />
               </div>
             </div>
           )}
