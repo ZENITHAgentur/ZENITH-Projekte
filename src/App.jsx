@@ -235,7 +235,7 @@ export default function App() {
       {view === "dashboard" && (
         <div onClick={() => setAddPickerOpen(p => !p)}
           style={{ position: "fixed", bottom: 26, right: 22, width: 56, height: 56, borderRadius: 28, background: Z.gold, color: "#1A1A1A", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", boxShadow: "0 6px 20px rgba(201,162,39,0.4)", zIndex: 40 }}>
-          <i className={`ti ${addPickerOpen ? "ti-x" : "ti-plus"}`} style={{ fontSize: 24, fontWeight: 900 }}></i>
+          <i className={`ti ${addPickerOpen ? "ti-x" : "ti-plus"}`} style={{ fontSize: 24, fontWeight: 900, color: "#000" }}></i>
         </div>
       )}
       {addPickerOpen && (
@@ -343,7 +343,7 @@ function BereichPage({ bereich, loading, children, onAdd }) {
         </div>
         {QUICK_ADD[bereich.key] && (
           <div onClick={onAdd} style={{ display: "flex", alignItems: "center", gap: 7, padding: "9px 16px", borderRadius: 9, background: Z.gold, color: "#1A1A1A", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
-            <i className="ti ti-plus" style={{ fontSize: 15 }}></i>{QUICK_ADD[bereich.key].title}
+            <i className="ti ti-plus" style={{ fontSize: 15, color: "#000" }}></i>{QUICK_ADD[bereich.key].title}
           </div>
         )}
       </div>
