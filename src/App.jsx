@@ -140,6 +140,23 @@ export default function App() {
     }
   };
 
+  // Legt direkt bei Jobanlage (nicht erst beim Archivieren) ein Moco-Projekt
+  // beim passenden Kunden an, damit das Team schon während der Arbeit Zeiten
+  // darauf buchen kann. Läuft best effort, blockiert das Speichern nie.
+  const notifyMocoCreateProject = async (job) => {
+    try {
+      const res = await fetch("/api/moco-create-project", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ job }),
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || "Moco-Fehler");
+      if (result.matched) showToast(`✓ Moco-Projekt angelegt: "${result.companyName}" – ${result.projectName}`);
+      else showToast(`Job angelegt – keine passende Moco-Firma für "${result.searchTerm}" gefunden, kein Moco-Projekt erstellt`, false);
+    } catch (e) {
+      showToast("Moco-Projekt anlegen fehlgeschlagen: " + e.message, false);
+    }
+  };
+
   useEffect(() => {
     if (!appUnlocked) return;
     let cancelled = false;
@@ -212,6 +229,7 @@ export default function App() {
       const { data: inserted, error } = await supabase.from("js_jobs").insert([row]).select(JOB_FIELDS).single();
       if (error) throw error;
       setData(p => ({ ...p, fotostudioJobs: [inserted, ...p.fotostudioJobs] }));
+      notifyMocoCreateProject(inserted);
     }
   };
 
