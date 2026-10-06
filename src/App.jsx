@@ -31,6 +31,29 @@ const BEREICHE = [
 ];
 const BEREICH_BY_KEY = Object.fromEntries(BEREICHE.map(b => [b.key, b]));
 
+// ─── Fachlogik Foto-/Videoproduktion ───────────────────────────────────────
+// Status-Pipeline und Kategorisierung spiegeln die alte Fotostudio-Jobliste,
+// damit das Team die gewohnten Begriffe wiederfindet.
+const STATUS_LIST = ["Neu", "In Arbeit", "Abgeschlossen", "Archiviert"];
+const STATUS_CFG = {
+  "Neu": { color: "#4ADE80" },
+  "In Arbeit": { color: "#4F9CDB" },
+  "Abgeschlossen": { color: "#9A968C" },
+  "Archiviert": { color: "#A66FE0" },
+};
+const PRIO_LIST = ["Hoch", "Mittel", "Niedrig"];
+const AUFWAND_LIST = ["Klein", "Mittel", "Groß"];
+const ORT_LIST = ["Im Haus", "Außer Haus"];
+const PROJEKTTYP_CFG = {
+  "Fotografie": { icon: "ti-camera", kategorien: ["Freistellerfotos", "Milieufotos", "Porträtfotos", "Produktfotos", "Reportage", "Sonstiges"] },
+  "Video": { icon: "ti-movie", kategorien: ["Imagefilm", "Produktvideo", "Social Media Clip", "Reels / TikTok", "Interview", "Sonstiges"] },
+};
+const EMPTY_JOB_FORM = {
+  name: "", status: "Neu", prio: "Mittel", aufwand: "Mittel", ort: "Im Haus",
+  personen: [], date: "", date_end: "", dauer: "", abgabe: "", kontakt: "", notizen: "",
+  projekttyp: "Fotografie", kategorien: [],
+};
+
 function fmtDate(iso) {
   if (!iso) return "–";
   const d = new Date(iso + "T00:00:00");
@@ -43,20 +66,10 @@ function today() {
 
 // ─── Schnelleingabe: Felder & Ziel-Tabelle je Bereich ──────────────────────
 const QUICK_ADD = {
-  fotostudio: {
-    table: "js_jobs",
-    title: "Neuer Job",
-    fields: [
-      { key: "name", label: "Jobname / Kunde", type: "text", required: true },
-      { key: "date", label: "Shooting-Datum", type: "date" },
-      { key: "abgabe", label: "Deadline", type: "date" },
-      { key: "prio", label: "Priorität", type: "select", options: ["Hoch", "Mittel", "Niedrig"], default: "Mittel" },
-    ],
-    buildRow: (v) => ({
-      name: v.name, date: v.date || null, abgabe: v.abgabe || null, prio: v.prio || "Mittel",
-      status: "Neu", aufwand: "Mittel", person: "", kontakt: "", notizen: "", asana_url: "", outlook_done: false,
-    }),
-  },
+  // fotostudio nutzt JobFormModal (eigenes, reicheres Formular inkl.
+  // Status-Pipeline, Projekttyp/Kategorien, Personen) statt dieser generischen
+  // Schnelleingabe - nur der Titel wird hier für Button-Label/Sichtbarkeit genutzt.
+  fotostudio: { title: "Neuer Job" },
   fotobox: {
     table: "fb_bookings",
     title: "Neue Fotobox Buchung",
@@ -91,20 +104,25 @@ export default function App() {
   const [view, setView] = useState("dashboard");
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState({ hochzeiten: [], fotostudioJobs: [], bookings: [], boxes: [] });
+  const [team, setTeam] = useState([]);
   const [weddingUnlocked, setWeddingUnlocked] = useState(() => {
     try { return sessionStorage.getItem("zp-wedding-unlocked") === "1"; } catch { return false; }
   });
   const [quickAddTarget, setQuickAddTarget] = useState(null);
+  const [jobModal, setJobModal] = useState(null);
   const [addPickerOpen, setAddPickerOpen] = useState(false);
+
+  const JOB_FIELDS = "id,name,status,date,date_end,abgabe,dauer,prio,aufwand,kontakt,notizen,projekttyp,kategorien,personen,ort,bereich";
 
   useEffect(() => {
     let cancelled = false;
     async function load() {
-      const [hz, js, fb, boxes] = await Promise.all([
+      const [hz, js, fb, boxes, core] = await Promise.all([
         supabase.from("hz_hochzeiten").select("id,data,created_at"),
-        supabase.from("js_jobs").select("id,name,status,date,abgabe,prio,bereich").order("created_at", { ascending: false }),
+        supabase.from("js_jobs").select(JOB_FIELDS).order("created_at", { ascending: false }),
         supabase.from("fb_bookings").select("id,title,location,start_date,end_date,status").order("start_date", { ascending: true }),
         supabase.from("fb_boxes").select("id,name"),
+        supabase.from("core_team").select("name").order("name", { ascending: true }),
       ]);
       if (cancelled) return;
       setData({
@@ -113,6 +131,7 @@ export default function App() {
         bookings: fb.data || [],
         boxes: boxes.data || [],
       });
+      setTeam((core.data || []).map(t => t.name));
       setLoading(false);
     }
     load();
@@ -140,11 +159,41 @@ export default function App() {
     const { data: inserted, error } = await supabase.from(cfg.table).insert([row]).select().single();
     if (error) throw error;
     setData(p => {
-      if (bereichKey === "fotostudio") return { ...p, fotostudioJobs: [inserted, ...p.fotostudioJobs] };
       if (bereichKey === "fotobox") return { ...p, bookings: [...p.bookings, inserted].sort((a, b) => a.start_date.localeCompare(b.start_date)) };
       if (bereichKey === "hochzeiten") return { ...p, hochzeiten: [...p.hochzeiten, inserted] };
       return p;
     });
+  };
+
+  // Speichert einen Foto-/Video-Job (Neuanlage oder Bearbeitung bestehender Jobs)
+  // inkl. der vollen Fachlogik-Felder (Status, Projekttyp/Kategorien, Personen, Ort, Zeitraum).
+  const handleSaveJob = async (values, existingId) => {
+    const row = {
+      name: values.name, status: values.status || "Neu", prio: values.prio || "Mittel", aufwand: values.aufwand || "Mittel",
+      ort: values.ort || "Im Haus", personen: values.personen || [], person: (values.personen || []).join(", "),
+      date: values.date || null, date_end: values.date_end || null, dauer: values.dauer || null,
+      abgabe: values.abgabe || null, kontakt: values.kontakt || "", notizen: values.notizen || "",
+      projekttyp: values.projekttyp || "Fotografie", kategorien: values.kategorien || [],
+    };
+    if (existingId) {
+      const { data: updated, error } = await supabase.from("js_jobs").update(row).eq("id", existingId).select(JOB_FIELDS).single();
+      if (error) throw error;
+      setData(p => ({ ...p, fotostudioJobs: p.fotostudioJobs.map(j => j.id === existingId ? updated : j) }));
+    } else {
+      const { data: inserted, error } = await supabase.from("js_jobs").insert([row]).select(JOB_FIELDS).single();
+      if (error) throw error;
+      setData(p => ({ ...p, fotostudioJobs: [inserted, ...p.fotostudioJobs] }));
+    }
+  };
+
+  // Status per Klick auf den Status-Pill in der Liste weiterschalten, ohne
+  // das Formular öffnen zu müssen - deckt den häufigsten Alltags-Workflow ab.
+  const handleStatusAdvance = async (job) => {
+    const idx = STATUS_LIST.indexOf(job.status);
+    const next = STATUS_LIST[(idx + 1) % STATUS_LIST.length];
+    const { data: updated, error } = await supabase.from("js_jobs").update({ status: next }).eq("id", job.id).select(JOB_FIELDS).single();
+    if (error) { console.error(error.message); return; }
+    setData(p => ({ ...p, fotostudioJobs: p.fotostudioJobs.map(j => j.id === job.id ? updated : j) }));
   };
 
   return (
@@ -190,10 +239,10 @@ export default function App() {
         {view === "hochzeiten" && !weddingUnlocked && (
           <PasswordGate onUnlock={() => setWeddingUnlocked(true)} />
         )}
-        {view === "fotostudio" && <BereichPage bereich={BEREICH_BY_KEY.fotostudio} loading={loading} onAdd={() => setQuickAddTarget("fotostudio")}>
+        {view === "fotostudio" && <BereichPage bereich={BEREICH_BY_KEY.fotostudio} loading={loading} onAdd={() => setJobModal({ mode: "new" })}>
           <ListPreview title="Offene Jobs" empty="Keine offenen Jobs." accent={BEREICH_BY_KEY.fotostudio.accent}>
             {openJobs.map(j => (
-              <PreviewRow key={j.id} title={j.name} sub={j.status} right={j.date ? fmtDate(j.date) : (j.abgabe ? "AB " + fmtDate(j.abgabe) : "")} />
+              <JobRow key={j.id} job={j} onOpen={() => setJobModal({ mode: "edit", job: j })} onAdvance={() => handleStatusAdvance(j)} />
             ))}
           </ListPreview>
         </BereichPage>}
@@ -241,7 +290,7 @@ export default function App() {
       {addPickerOpen && (
         <div style={{ position: "fixed", bottom: 92, right: 22, background: Z.panel, border: `1px solid ${Z.border}`, borderRadius: 12, overflow: "hidden", zIndex: 40, minWidth: 190, boxShadow: "0 10px 30px rgba(0,0,0,0.5)" }}>
           {BEREICHE.filter(b => QUICK_ADD[b.key] && (!b.locked || weddingUnlocked)).map(b => (
-            <div key={b.key} onClick={() => { setAddPickerOpen(false); setQuickAddTarget(b.key); }}
+            <div key={b.key} onClick={() => { setAddPickerOpen(false); b.key === "fotostudio" ? setJobModal({ mode: "new" }) : setQuickAddTarget(b.key); }}
               style={{ padding: "11px 14px", display: "flex", alignItems: "center", gap: 9, cursor: "pointer", borderBottom: `1px solid ${Z.borderSoft}`, fontSize: 13, fontWeight: 600 }}>
               <i className={`ti ${b.icon}`} style={{ fontSize: 15, color: b.accent }}></i>
               {QUICK_ADD[b.key].title}
@@ -254,6 +303,12 @@ export default function App() {
         <QuickAddModal bereichKey={quickAddTarget} bereich={BEREICH_BY_KEY[quickAddTarget]} boxId={data.boxes[0]?.id}
           onClose={() => setQuickAddTarget(null)}
           onSubmit={async (row) => { await handleInsert(quickAddTarget, row); setQuickAddTarget(null); }} />
+      )}
+
+      {jobModal && (
+        <JobFormModal mode={jobModal.mode} job={jobModal.job} team={team}
+          onClose={() => setJobModal(null)}
+          onSubmit={async (values) => { await handleSaveJob(values, jobModal.job?.id); setJobModal(null); }} />
       )}
     </div>
   );
@@ -391,6 +446,35 @@ function PreviewRow({ title, sub, right }) {
   );
 }
 
+// ─── Job-Zeile Foto-/Videoproduktion ───────────────────────────────────────
+// Klick auf die Zeile öffnet die Detailansicht, Klick auf den Status-Pill
+// schaltet den Status direkt weiter (häufigster Alltags-Workflow).
+function JobRow({ job, onOpen, onAdvance }) {
+  const statusColor = STATUS_CFG[job.status]?.color || Z.textSoft;
+  const kategorien = Array.isArray(job.kategorien) ? job.kategorien : [];
+  const personen = Array.isArray(job.personen) ? job.personen : [];
+  return (
+    <div onClick={onOpen} style={{ padding: "12px 16px", borderBottom: `1px solid ${Z.borderSoft}`, display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
+      <div onClick={e => { e.stopPropagation(); onAdvance(); }} title="Status weiterschalten"
+        style={{ flexShrink: 0, padding: "3px 9px", borderRadius: 20, fontSize: 10.5, fontWeight: 700, color: statusColor, border: `1.5px solid ${statusColor}`, cursor: "pointer", whiteSpace: "nowrap" }}>
+        {job.status}
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 13.5, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{job.name}</div>
+        <div style={{ fontSize: 11.5, color: Z.textSoft, marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+          {[job.projekttyp, kategorien.join(", "), personen.join(", ")].filter(Boolean).join(" · ")}
+        </div>
+      </div>
+      {(job.date || job.abgabe) && (
+        <div style={{ fontSize: 11.5, fontWeight: 700, color: Z.textSoft, flexShrink: 0, textAlign: "right" }}>
+          {job.date ? fmtDate(job.date) : "AB " + fmtDate(job.abgabe)}
+          {job.date_end && job.date_end !== job.date && <div style={{ fontWeight: 500 }}>bis {fmtDate(job.date_end)}</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Passwortschutz für den Hochzeiten-Bereich ─────────────────────────────
 // Die Übersichtsseite zeigt anstehende Hochzeiten bewusst weiterhin offen an
 // (siehe Dashboard) - nur der eigentliche Bereich mit allen Details ist
@@ -511,6 +595,178 @@ function QuickAddModal({ bereichKey, bereich, boxId, onClose, onSubmit }) {
           <div onClick={onClose} style={{ flex: 1, padding: 12, borderRadius: 9, border: `1.5px solid ${Z.border}`, textAlign: "center", cursor: "pointer", fontSize: 14, fontWeight: 600, color: Z.textSoft }}>Abbrechen</div>
           <div onClick={handleSubmit} style={{ flex: 2, padding: 12, borderRadius: 9, background: Z.gold, color: "#1A1A1A", textAlign: "center", cursor: busy ? "wait" : "pointer", fontSize: 14, fontWeight: 700 }}>
             {busy ? "Speichert…" : "Hinzufügen"}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FieldLabel({ children }) {
+  return <div style={{ fontSize: 11, fontWeight: 700, color: Z.textSoft, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 6 }}>{children}</div>;
+}
+
+function ChipSelect({ options, selected, onToggle, accent = Z.gold }) {
+  return (
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 7 }}>
+      {options.map(o => {
+        const active = selected.includes(o);
+        return (
+          <div key={o} onClick={() => onToggle(o)} style={{
+            padding: "6px 12px", borderRadius: 16, fontSize: 12.5, fontWeight: 600, cursor: "pointer",
+            border: `1.5px solid ${active ? accent : Z.border}`, background: active ? accent : "transparent", color: active ? "#1A1A1A" : Z.textSoft,
+          }}>{o}</div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─── Foto-/Video-Job: Neuanlage & Bearbeitung ──────────────────────────────
+// Eigenes, reicheres Formular (statt der generischen Schnelleingabe), da hier
+// die volle Fachlogik der alten Jobliste nachgebildet wird: Status-Pipeline,
+// Projekttyp/Kategorien, Personen-Zuordnung, Shooting-Zeitraum, Ort.
+function JobFormModal({ mode, job, team, onClose, onSubmit }) {
+  const [v, setV] = useState(() => mode === "edit" && job ? {
+    name: job.name || "", status: job.status || "Neu", prio: job.prio || "Mittel", aufwand: job.aufwand || "Mittel",
+    ort: job.ort || "Im Haus", personen: Array.isArray(job.personen) ? job.personen : [],
+    date: job.date || "", date_end: job.date_end || "", dauer: job.dauer || "", abgabe: job.abgabe || "",
+    kontakt: job.kontakt || "", notizen: job.notizen || "", projekttyp: job.projekttyp || "Fotografie",
+    kategorien: Array.isArray(job.kategorien) ? job.kategorien : [],
+  } : EMPTY_JOB_FORM);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const set = (k, val) => setV(p => ({ ...p, [k]: val }));
+  const toggleIn = (k, item) => setV(p => ({ ...p, [k]: p[k].includes(item) ? p[k].filter(x => x !== item) : [...p[k], item] }));
+
+  const kategorienOptions = PROJEKTTYP_CFG[v.projekttyp]?.kategorien || [];
+
+  const handleSubmit = async () => {
+    if (!v.name.trim()) { setError("Jobname / Kunde fehlt"); return; }
+    setBusy(true); setError("");
+    try {
+      await onSubmit(v);
+    } catch (e) {
+      setError(e.message);
+      setBusy(false);
+    }
+  };
+
+  const Row = ({ children }) => <div style={{ display: "flex", gap: 12 }}>{children}</div>;
+  const Col = ({ children }) => <div style={{ flex: 1, minWidth: 0 }}>{children}</div>;
+  const inputStyle = { width: "100%", padding: "9px 11px", borderRadius: 9, border: `1.5px solid ${Z.border}`, background: Z.panelAlt, color: Z.text, fontSize: 14, boxSizing: "border-box" };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 60, display: "flex", alignItems: "flex-end", justifyContent: "center" }}
+      onClick={e => e.target === e.currentTarget && onClose()}>
+      <div style={{ background: Z.panel, border: `1px solid ${Z.border}`, borderBottom: "none", width: "100%", maxWidth: 520, borderRadius: "16px 16px 0 0", maxHeight: "92vh", display: "flex", flexDirection: "column" }}>
+        <div style={{ padding: "16px 18px", borderBottom: `1px solid ${Z.border}`, display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
+          <div style={{ fontSize: 16, fontWeight: 700 }}>{mode === "edit" ? "Job bearbeiten" : "Neuer Job"}</div>
+          <i className="ti ti-x" onClick={onClose} style={{ fontSize: 18, color: Z.textSoft, cursor: "pointer" }}></i>
+        </div>
+        <div style={{ padding: "16px 18px", display: "flex", flexDirection: "column", gap: 14, overflowY: "auto" }}>
+          {mode === "edit" && (
+            <div>
+              <FieldLabel>Status</FieldLabel>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 7 }}>
+                {STATUS_LIST.map(s => (
+                  <div key={s} onClick={() => set("status", s)} style={{
+                    padding: "6px 12px", borderRadius: 16, fontSize: 12.5, fontWeight: 700, cursor: "pointer",
+                    border: `1.5px solid ${STATUS_CFG[s].color}`, background: v.status === s ? STATUS_CFG[s].color : "transparent",
+                    color: v.status === s ? "#0C0C0D" : STATUS_CFG[s].color,
+                  }}>{s}</div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div>
+            <FieldLabel>Jobname / Kunde *</FieldLabel>
+            <input type="text" value={v.name} onChange={e => set("name", e.target.value)} style={inputStyle} autoFocus />
+          </div>
+
+          <Row>
+            <Col>
+              <FieldLabel>Projekttyp</FieldLabel>
+              <select value={v.projekttyp} onChange={e => setV(p => ({ ...p, projekttyp: e.target.value, kategorien: [] }))} style={inputStyle}>
+                {Object.keys(PROJEKTTYP_CFG).map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </Col>
+            <Col>
+              <FieldLabel>Ort</FieldLabel>
+              <select value={v.ort} onChange={e => set("ort", e.target.value)} style={inputStyle}>
+                {ORT_LIST.map(o => <option key={o} value={o}>{o}</option>)}
+              </select>
+            </Col>
+          </Row>
+
+          <div>
+            <FieldLabel>Kategorien</FieldLabel>
+            <ChipSelect options={kategorienOptions} selected={v.kategorien} onToggle={k => toggleIn("kategorien", k)} accent={BEREICH_BY_KEY.fotostudio.accent} />
+          </div>
+
+          <div>
+            <FieldLabel>Personen</FieldLabel>
+            {team.length === 0 ? (
+              <div style={{ fontSize: 12.5, color: Z.textFaint }}>Kein Team hinterlegt.</div>
+            ) : (
+              <ChipSelect options={team} selected={v.personen} onToggle={p => toggleIn("personen", p)} accent={BEREICH_BY_KEY.fotostudio.accent} />
+            )}
+          </div>
+
+          <Row>
+            <Col>
+              <FieldLabel>Priorität</FieldLabel>
+              <select value={v.prio} onChange={e => set("prio", e.target.value)} style={inputStyle}>
+                {PRIO_LIST.map(o => <option key={o} value={o}>{o}</option>)}
+              </select>
+            </Col>
+            <Col>
+              <FieldLabel>Aufwand</FieldLabel>
+              <select value={v.aufwand} onChange={e => set("aufwand", e.target.value)} style={inputStyle}>
+                {AUFWAND_LIST.map(o => <option key={o} value={o}>{o}</option>)}
+              </select>
+            </Col>
+          </Row>
+
+          <Row>
+            <Col>
+              <FieldLabel>Shooting-Datum</FieldLabel>
+              <input type="date" value={v.date} onChange={e => set("date", e.target.value)} style={inputStyle} />
+            </Col>
+            <Col>
+              <FieldLabel>bis (mehrtägig)</FieldLabel>
+              <input type="date" value={v.date_end} onChange={e => set("date_end", e.target.value)} style={inputStyle} />
+            </Col>
+          </Row>
+
+          <Row>
+            <Col>
+              <FieldLabel>Dauer</FieldLabel>
+              <input type="text" value={v.dauer} onChange={e => set("dauer", e.target.value)} placeholder="z.B. 4 Std." style={inputStyle} />
+            </Col>
+            <Col>
+              <FieldLabel>Deadline / Abgabe</FieldLabel>
+              <input type="date" value={v.abgabe} onChange={e => set("abgabe", e.target.value)} style={inputStyle} />
+            </Col>
+          </Row>
+
+          <div>
+            <FieldLabel>Kontakt</FieldLabel>
+            <input type="text" value={v.kontakt} onChange={e => set("kontakt", e.target.value)} style={inputStyle} />
+          </div>
+
+          <div>
+            <FieldLabel>Notizen</FieldLabel>
+            <textarea value={v.notizen} onChange={e => set("notizen", e.target.value)} rows={4} style={{ ...inputStyle, resize: "vertical", fontFamily: FONT_BODY }} />
+          </div>
+
+          {error && <div style={{ color: Z.danger, fontSize: 12.5 }}>{error}</div>}
+        </div>
+        <div style={{ padding: "13px 18px", borderTop: `1px solid ${Z.border}`, display: "flex", gap: 10, flexShrink: 0 }}>
+          <div onClick={onClose} style={{ flex: 1, padding: 12, borderRadius: 9, border: `1.5px solid ${Z.border}`, textAlign: "center", cursor: "pointer", fontSize: 14, fontWeight: 600, color: Z.textSoft }}>Abbrechen</div>
+          <div onClick={handleSubmit} style={{ flex: 2, padding: 12, borderRadius: 9, background: Z.gold, color: "#1A1A1A", textAlign: "center", cursor: busy ? "wait" : "pointer", fontSize: 14, fontWeight: 700 }}>
+            {busy ? "Speichert…" : (mode === "edit" ? "Speichern" : "Anlegen")}
           </div>
         </div>
       </div>
