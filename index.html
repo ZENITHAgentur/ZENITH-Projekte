@@ -7,7 +7,10 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/2.47.0/iconfont/tabler-icons.min.css" />
+    <!-- Lokal eingebunden statt über cdnjs, damit die Icons nicht von der
+         Erreichbarkeit eines externen CDNs abhängen (z.B. in Firmennetzen
+         oder bei Adblockern, die cdnjs-Anfragen blockieren). -->
+    <link rel="stylesheet" href="/tabler-icons/tabler-icons.min.css" />
   </head>
   <body>
     <div id="root"></div>
