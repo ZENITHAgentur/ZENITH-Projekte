@@ -44,7 +44,16 @@ const STATUS_CFG = {
 };
 const PRIO_LIST = ["Hoch", "Mittel", "Niedrig"];
 const PRIO_ORDER = { "Hoch": 0, "Mittel": 1, "Niedrig": 2 };
+// Ampel: eindeutige Dringlichkeits-Farben wie eine echte Verkehrsampel.
+const PRIO_CFG = {
+  "Hoch": { color: "#E0607A" },
+  "Mittel": { color: "#E0BE5C" },
+  "Niedrig": { color: "#4ADE80" },
+};
 const AUFWAND_LIST = ["Klein", "Mittel", "Groß"];
+// Aufwand: keine Farbcodierung, sondern Balken-Füllstand (1/2/3).
+const AUFWAND_CFG = { "Klein": { level: 1 }, "Mittel": { level: 2 }, "Groß": { level: 3 } };
+const GROUP_CFG = { prio: { list: () => PRIO_LIST, label: "Priorität" }, aufwand: { list: () => AUFWAND_LIST, label: "Aufwand" } };
 const ORT_LIST = ["Im Haus", "Außer Haus"];
 const PROJEKTTYP_CFG = {
   "Fotografie": { icon: "ti-camera", kategorien: ["Freistellerfotos", "Milieufotos", "Porträtfotos", "Produktfotos", "Reportage", "Sonstiges"] },
@@ -145,8 +154,13 @@ export default function App() {
   const [addPickerOpen, setAddPickerOpen] = useState(false);
   const [fotoSearch, setFotoSearch] = useState("");
   const [grafikSearch, setGrafikSearch] = useState("");
+  const [fotoView, setFotoView] = useState(() => { try { return localStorage.getItem("zp-foto-view") || "liste"; } catch { return "liste"; } });
+  const [groupBy, setGroupBy] = useState(() => { try { return localStorage.getItem("zp-foto-groupby") || "prio"; } catch { return "prio"; } });
+  const [sortMode, setSortMode] = useState(false);
+  useEffect(() => { try { localStorage.setItem("zp-foto-view", fotoView); } catch {} }, [fotoView]);
+  useEffect(() => { try { localStorage.setItem("zp-foto-groupby", groupBy); } catch {} }, [groupBy]);
 
-  const JOB_FIELDS = "id,name,status,date,date_end,abgabe,dauer,prio,aufwand,kontakt,notizen,projekttyp,kategorien,personen,ort,bereich,attachments,stationen";
+  const JOB_FIELDS = "id,name,status,date,date_end,abgabe,dauer,prio,aufwand,kontakt,notizen,projekttyp,kategorien,personen,ort,bereich,attachments,stationen,sort_order";
   const [toast, setToast] = useState(null);
   const showToast = (msg, ok = true) => {
     setToast({ msg, ok });
@@ -228,6 +242,20 @@ export default function App() {
     return () => { cancelled = true; };
   }, [appUnlocked]);
 
+  // Live-Sync: läuft ein Kollege gerade an derselben Jobliste, zieht sich die
+  // Seite Änderungen automatisch nach, ohne dass neu geladen werden muss.
+  useEffect(() => {
+    if (!appUnlocked) return;
+    const reloadJobs = () => {
+      supabase.from("js_jobs").select(JOB_FIELDS).order("created_at", { ascending: false })
+        .then(({ data: rows }) => { if (rows) setData(p => ({ ...p, fotostudioJobs: rows })); });
+    };
+    const channel = supabase.channel("js-jobs-changes")
+      .on("postgres_changes", { event: "*", schema: "public", table: "js_jobs" }, reloadJobs)
+      .subscribe();
+    return () => { channel.unsubscribe(); };
+  }, [appUnlocked]);
+
   const t = today();
   const upcomingWeddings = data.hochzeiten
     .filter(h => h.data?.hochzeitsDatum && h.data.hochzeitsDatum >= t)
@@ -245,7 +273,12 @@ export default function App() {
     const haystack = [job.name, job.kontakt, job.notizen, ...(job.personen || [])].join(" ").toLowerCase();
     return haystack.includes(term.trim().toLowerCase());
   };
-  const visibleFotoJobs = openJobs.filter(j => matchesSearch(j, fotoSearch));
+  const visibleFotoJobs = openJobs.filter(j => matchesSearch(j, fotoSearch)).slice().sort((a, b) => {
+    if (a.sort_order == null && b.sort_order == null) return 0;
+    if (a.sort_order == null) return 1;
+    if (b.sort_order == null) return -1;
+    return a.sort_order - b.sort_order;
+  });
   const visibleGrafikJobs = openJobsGrafik.filter(j => matchesSearch(j, grafikSearch));
   const todaysFotoJobs = openJobsAll.filter(j => j.bereich !== "Grafik" && jobActiveOn(j, t));
   const upcomingBookings = data.bookings
@@ -313,6 +346,29 @@ export default function App() {
     const { data: updated, error } = await supabase.from("js_jobs").update({ date: t }).eq("id", jobId).select(JOB_FIELDS).single();
     if (error) { console.error(error.message); return; }
     setData(p => ({ ...p, fotostudioJobs: p.fotostudioJobs.map(j => j.id === jobId ? updated : j) }));
+  };
+
+  // Board-Ansicht: Karte in eine andere Spalte (Priorität oder Aufwand) ziehen
+  // schreibt den jeweiligen Wert direkt auf den Job.
+  const handleChangeGroupValue = async (jobId, field, value) => {
+    const { data: updated, error } = await supabase.from("js_jobs").update({ [field]: value }).eq("id", jobId).select(JOB_FIELDS).single();
+    if (error) { console.error(error.message); return; }
+    setData(p => ({ ...p, fotostudioJobs: p.fotostudioJobs.map(j => j.id === jobId ? updated : j) }));
+  };
+
+  // Sortier-Modus (nur Listenansicht): Job-Zeile per Drag & Drop auf eine
+  // andere Position ziehen, schreibt die neue Reihenfolge als sort_order.
+  const handleReorderJobs = async (orderedIds) => {
+    const updates = orderedIds.map((id, i) => ({ id, sort_order: i }));
+    setData(p => ({ ...p, fotostudioJobs: p.fotostudioJobs.map(j => { const u = updates.find(x => x.id === j.id); return u ? { ...j, sort_order: u.sort_order } : j; }) }));
+    await Promise.all(updates.map(u => supabase.from("js_jobs").update({ sort_order: u.sort_order }).eq("id", u.id)));
+  };
+  const handleDragReorder = (draggedId, targetId) => {
+    const ids = visibleFotoJobs.map(j => j.id);
+    const from = ids.indexOf(draggedId), to = ids.indexOf(targetId);
+    if (from === -1 || to === -1 || from === to) return;
+    ids.splice(to, 0, ids.splice(from, 1)[0]);
+    handleReorderJobs(ids);
   };
 
   // Jobs, die die KI-Erfassung (api/parse-input.js, ChatCapture im "Neuer
@@ -390,11 +446,42 @@ export default function App() {
             <StudioOccupancyWidget jobs={openJobs} onOpen={j => setJobModal({ mode: "edit", job: j })} />
           </div>
           <SearchBox value={fotoSearch} onChange={setFotoSearch} placeholder="Suche nach Name, Kontakt, Notiz, Person…" />
-          <ListPreview title="Offene Jobs" empty={fotoSearch ? "Keine Treffer für diese Suche." : "Keine offenen Jobs."} accent={BEREICH_BY_KEY.fotostudio.accent}>
-            {visibleFotoJobs.map(j => (
-              <JobRow key={j.id} job={j} onOpen={() => setJobModal({ mode: "edit", job: j })} onAdvance={() => handleStatusAdvance(j)} />
-            ))}
-          </ListPreview>
+
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", background: Z.panelAlt, borderRadius: 8, overflow: "hidden" }}>
+              {[["liste", "ti-list", "Liste"], ["board", "ti-layout-kanban", "Board"]].map(([key, icon, label]) => (
+                <div key={key} onClick={() => setFotoView(key)}
+                  style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 13px", cursor: "pointer", fontSize: 12.5, fontWeight: 700, background: fotoView === key ? Z.gold : "transparent", color: fotoView === key ? "#1A1A1A" : Z.textSoft }}>
+                  <i className={`ti ${icon}`} style={{ fontSize: 14 }}></i>{label}
+                </div>
+              ))}
+            </div>
+            {fotoView === "board" ? (
+              <div style={{ display: "flex", background: Z.panelAlt, borderRadius: 8, overflow: "hidden" }}>
+                {[["prio", "Priorität"], ["aufwand", "Aufwand"]].map(([key, label]) => (
+                  <div key={key} onClick={() => setGroupBy(key)}
+                    style={{ padding: "7px 13px", cursor: "pointer", fontSize: 12.5, fontWeight: 700, background: groupBy === key ? Z.gold : "transparent", color: groupBy === key ? "#1A1A1A" : Z.textSoft }}>
+                    {label}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div onClick={() => { setSortMode(s => { const next = !s; if (next) showToast("Sortier-Modus an – Jobs per Ziehen neu anordnen"); return next; }); }}
+                style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 13px", borderRadius: 8, cursor: "pointer", fontSize: 12.5, fontWeight: 700, background: sortMode ? Z.gold : Z.panelAlt, color: sortMode ? "#1A1A1A" : Z.textSoft }}>
+                <i className="ti ti-arrows-sort" style={{ fontSize: 14 }}></i>{sortMode ? "Fertig" : "Sortierung bearbeiten"}
+              </div>
+            )}
+          </div>
+
+          {fotoView === "board" ? (
+            <BoardView jobs={visibleFotoJobs} groupBy={groupBy} onOpen={j => setJobModal({ mode: "edit", job: j })} onChangeGroup={(id, val) => handleChangeGroupValue(id, groupBy, val)} />
+          ) : (
+            <ListPreview title="Offene Jobs" empty={fotoSearch ? "Keine Treffer für diese Suche." : "Keine offenen Jobs."} accent={BEREICH_BY_KEY.fotostudio.accent}>
+              {visibleFotoJobs.map(j => (
+                <JobRow key={j.id} job={j} onOpen={() => setJobModal({ mode: "edit", job: j })} onAdvance={() => handleStatusAdvance(j)} sortMode={sortMode} onReorder={handleDragReorder} />
+              ))}
+            </ListPreview>
+          )}
         </BereichPage>}
         {view === "fotobox" && <BereichPage bereich={BEREICH_BY_KEY.fotobox} loading={loading} onAdd={() => setQuickAddTarget("fotobox")}>
           <ListPreview title="Anstehende Buchungen" empty="Keine anstehenden Buchungen." accent={BEREICH_BY_KEY.fotobox.accent}>
@@ -837,21 +924,200 @@ function StudioOccupancyWidget({ jobs, onOpen }) {
   );
 }
 
+// ─── Prio-Ampel (klares Ampelsystem für Dringlichkeit) ─────────────────────
+function PrioAmpelMini({ value }) {
+  return (
+    <div style={{ display: "inline-flex", gap: 3, alignItems: "center" }}>
+      {PRIO_LIST.map(p => {
+        const active = value === p;
+        const c = PRIO_CFG[p].color;
+        return <div key={p} style={{ width: 6, height: 6, borderRadius: "50%", background: active ? c : Z.borderSoft, boxShadow: active ? `0 0 4px ${c}` : "none" }} />;
+      })}
+    </div>
+  );
+}
+
+function PrioAmpelPicker({ value, onChange }) {
+  return (
+    <div style={{ display: "flex", gap: 16 }}>
+      {PRIO_LIST.map(p => {
+        const active = value === p;
+        const c = PRIO_CFG[p].color;
+        return (
+          <div key={p} onClick={() => onChange(p)} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, cursor: "pointer" }}>
+            <div style={{ width: 28, height: 28, borderRadius: "50%", background: active ? c : Z.panelAlt, border: `2px solid ${active ? c : Z.border}`, boxShadow: active ? `0 0 10px ${c}77` : "none", transition: "all 0.15s" }} />
+            <div style={{ fontSize: 11, fontWeight: 700, color: active ? Z.text : Z.textSoft }}>{p}</div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─── Aufwand-Balken (Füllstand statt Farbe) ─────────────────────────────────
+const AUFWAND_BAR_HEIGHTS = [5, 8, 11];
+function AufwandBarsMini({ value }) {
+  const level = AUFWAND_CFG[value]?.level || 2;
+  return (
+    <div style={{ display: "inline-flex", gap: 2, alignItems: "flex-end" }}>
+      {AUFWAND_BAR_HEIGHTS.map((h, i) => (
+        <div key={i} style={{ width: 3, height: h, borderRadius: 1, background: i < level ? Z.gold : Z.borderSoft }} />
+      ))}
+    </div>
+  );
+}
+
+function AufwandBarsPicker({ value, onChange }) {
+  return (
+    <div style={{ display: "flex", gap: 20 }}>
+      {AUFWAND_LIST.map(a => {
+        const active = value === a;
+        const level = AUFWAND_CFG[a].level;
+        return (
+          <div key={a} onClick={() => onChange(a)} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, cursor: "pointer" }}>
+            <div style={{ display: "flex", gap: 3, alignItems: "flex-end", height: 20 }}>
+              {[10, 15, 20].map((h, i) => (
+                <div key={i} style={{ width: 7, height: h, borderRadius: 2, background: i < level ? (active ? Z.gold : Z.textSoft) : Z.border }} />
+              ))}
+            </div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: active ? Z.text : Z.textSoft }}>{a}</div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─── Notizen mit leichter Formatierung: "Label: Wert"-Zeilen, Aufzählungen
+// und erkannte Werte (Datum/Mengen/Preise) werden hervorgehoben. ───────────
+function renderNotizen(raw) {
+  const text = (raw || "").trim();
+  if (!text) return null;
+  const lines = text.split(/\r?\n/).filter(l => l.trim() !== "");
+  const labelRe = /^([A-Za-zÄÖÜäöüß][A-Za-zÄÖÜäöüß0-9 /_-]{1,28}):\s+(.+)$/;
+  const bulletRe = /^[-*•]\s+(.+)$/;
+  const markRe = /(\d{1,2}\.\d{1,2}\.\d{2,4}|\d{4}-\d{2}-\d{2}|\d+(?:[.,]\d+)?\s?(?:Stück|St\.|Std\.|Stunden|x|%|€|EUR))/gi;
+
+  const withMarks = (str) => {
+    const out = [];
+    let last = 0, m;
+    const re = new RegExp(markRe);
+    while ((m = re.exec(str)) !== null) {
+      if (m.index > last) out.push(str.slice(last, m.index));
+      out.push(<mark key={m.index} style={{ background: "rgba(201,162,39,0.28)", color: Z.goldLight, padding: "1px 4px", borderRadius: 4, fontWeight: 700 }}>{m[0]}</mark>);
+      last = m.index + m[0].length;
+    }
+    if (last < str.length) out.push(str.slice(last));
+    return out;
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+      {lines.map((line, i) => {
+        const lm = line.match(labelRe);
+        const bm = line.match(bulletRe);
+        if (lm) return (
+          <div key={i} style={{ display: "flex", gap: 6, alignItems: "baseline" }}>
+            <span style={{ fontSize: 11, fontWeight: 800, color: Z.gold, textTransform: "uppercase", letterSpacing: "0.03em", flexShrink: 0 }}>{lm[1]}:</span>
+            <span style={{ fontSize: 13 }}>{withMarks(lm[2])}</span>
+          </div>
+        );
+        if (bm) return (
+          <div key={i} style={{ display: "flex", gap: 6, alignItems: "baseline" }}>
+            <span style={{ color: Z.gold, fontWeight: 800, flexShrink: 0 }}>•</span>
+            <span style={{ fontSize: 13 }}>{withMarks(bm[1])}</span>
+          </div>
+        );
+        return <div key={i} style={{ fontSize: 13 }}>{withMarks(line)}</div>;
+      })}
+    </div>
+  );
+}
+
+// ─── Board-Ansicht (Drag & Drop nach Priorität / Aufwand) ──────────────────
+function BoardView({ jobs, groupBy, onOpen, onChangeGroup }) {
+  const list = GROUP_CFG[groupBy].list();
+  const [overCol, setOverCol] = useState(null);
+  const [dragId, setDragId] = useState(null);
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 12, alignItems: "start" }}>
+      {list.map(val => {
+        const items = jobs.filter(j => (j[groupBy] || "Mittel") === val);
+        const isOver = overCol === val;
+        return (
+          <div key={val}
+            onDragOver={e => { e.preventDefault(); setOverCol(val); }}
+            onDragLeave={() => setOverCol(o => (o === val ? null : o))}
+            onDrop={e => { e.preventDefault(); setOverCol(null); const id = e.dataTransfer.getData("text/job-id"); if (id) onChangeGroup(id, val); }}
+            style={{ background: isOver ? "rgba(201,162,39,0.1)" : Z.panel, border: `1.5px solid ${isOver ? Z.gold : Z.border}`, borderRadius: 12, padding: 10, transition: "background .1s, border-color .1s" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 9 }}>
+              {groupBy === "prio" ? <PrioAmpelMini value={val} /> : <AufwandBarsMini value={val} />}
+              <div style={{ fontSize: 13, fontWeight: 800 }}>{val}</div>
+              <div style={{ marginLeft: "auto", fontSize: 11, fontWeight: 700, color: Z.textSoft, background: Z.panelAlt, borderRadius: 10, padding: "1px 8px" }}>{items.length}</div>
+            </div>
+            {items.length === 0 ? (
+              <div style={{ fontSize: 12, color: Z.textFaint, padding: "12px 4px", textAlign: "center", border: `1.5px dashed ${Z.border}`, borderRadius: 8 }}>Karte hierher ziehen</div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+                {items.map(job => (
+                  <BoardCard key={job.id} job={job} dragging={dragId === job.id}
+                    onOpen={() => onOpen(job)}
+                    onDragStart={e => { e.dataTransfer.setData("text/job-id", job.id); setDragId(job.id); }}
+                    onDragEnd={() => setDragId(null)} />
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function BoardCard({ job, dragging, onOpen, onDragStart, onDragEnd }) {
+  const sc = STATUS_CFG[job.status] || STATUS_CFG["Neu"];
+  const personen = Array.isArray(job.personen) ? job.personen : [];
+  return (
+    <div draggable onDragStart={onDragStart} onDragEnd={onDragEnd} onClick={onOpen}
+      style={{ opacity: dragging ? 0.3 : 1, background: Z.panelAlt, borderRadius: 9, padding: "9px 10px", borderLeft: `3px solid ${sc.color}`, cursor: "grab", display: "flex", alignItems: "center", gap: 8 }}>
+      <i className="ti ti-grip-vertical" style={{ fontSize: 14, color: Z.textFaint, flexShrink: 0 }}></i>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{job.name}</div>
+        <div style={{ display: "flex", gap: 6, marginTop: 4, flexWrap: "wrap", alignItems: "center" }}>
+          <span style={{ fontSize: 10, fontWeight: 600, padding: "1px 7px", borderRadius: 10, background: Z.panel, color: sc.color }}>{job.status}</span>
+          <PrioAmpelMini value={job.prio || "Mittel"} />
+          <AufwandBarsMini value={job.aufwand || "Mittel"} />
+          {personen.length > 0 && <span style={{ fontSize: 10, color: Z.textSoft }}>{personen.join(", ")}</span>}
+          {job.date && <span style={{ fontSize: 10, fontWeight: 700, color: Z.textSoft }}>{fmtDate(job.date)}</span>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Job-Zeile Foto-/Videoproduktion ───────────────────────────────────────
 // Klick auf die Zeile öffnet die Detailansicht, Klick auf den Status-Pill
 // schaltet den Status direkt weiter (häufigster Alltags-Workflow).
-function JobRow({ job, onOpen, onAdvance }) {
+function JobRow({ job, onOpen, onAdvance, sortMode, onReorder }) {
   const statusColor = STATUS_CFG[job.status]?.color || Z.textSoft;
   const kategorien = Array.isArray(job.kategorien) ? job.kategorien : [];
   const personen = Array.isArray(job.personen) ? job.personen : [];
+  const [dragOver, setDragOver] = useState(false);
   return (
-    <div draggable onDragStart={e => e.dataTransfer.setData("text/job-id", job.id)}
-      onClick={onOpen} title="Ziehen, um auf „Heute“ einzuplanen"
-      style={{ padding: "12px 16px", borderBottom: `1px solid ${Z.borderSoft}`, display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
+    <div draggable
+      onDragStart={e => e.dataTransfer.setData("text/job-id", job.id)}
+      onDragOver={sortMode ? (e => { e.preventDefault(); setDragOver(true); }) : undefined}
+      onDragLeave={sortMode ? (() => setDragOver(false)) : undefined}
+      onDrop={sortMode ? (e => { e.preventDefault(); setDragOver(false); const id = e.dataTransfer.getData("text/job-id"); if (id && id !== job.id) onReorder(id, job.id); }) : undefined}
+      onClick={onOpen} title={sortMode ? "Ziehen, um die Reihenfolge zu ändern" : "Ziehen, um auf „Heute“ einzuplanen"}
+      style={{ padding: "12px 16px", borderBottom: `1px solid ${Z.borderSoft}`, display: "flex", alignItems: "center", gap: 10, cursor: sortMode ? "grab" : "pointer", background: dragOver ? "rgba(201,162,39,0.1)" : "transparent" }}>
+      {sortMode && <i className="ti ti-grip-vertical" style={{ fontSize: 14, color: Z.textFaint, flexShrink: 0 }}></i>}
       <div onClick={e => { e.stopPropagation(); onAdvance(); }} title="Status weiterschalten"
         style={{ flexShrink: 0, padding: "3px 9px", borderRadius: 20, fontSize: 10.5, fontWeight: 700, color: statusColor, border: `1.5px solid ${statusColor}`, cursor: "pointer", whiteSpace: "nowrap" }}>
         {job.status}
       </div>
+      <div title={`Priorität: ${job.prio || "Mittel"}`} style={{ flexShrink: 0 }}><PrioAmpelMini value={job.prio || "Mittel"} /></div>
+      <div title={`Aufwand: ${job.aufwand || "Mittel"}`} style={{ flexShrink: 0 }}><AufwandBarsMini value={job.aufwand || "Mittel"} /></div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 13.5, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", display: "flex", alignItems: "center", gap: 6 }}>
           {job.name}
@@ -1380,20 +1646,14 @@ function JobFormModal({ mode, job, team, onAiAction, onChatJobsCreated, onClose,
             )}
           </div>
 
-          <Row>
-            <Col>
-              <FieldLabel>Priorität</FieldLabel>
-              <select value={v.prio} onChange={e => set("prio", e.target.value)} style={inputStyle}>
-                {PRIO_LIST.map(o => <option key={o} value={o}>{o}</option>)}
-              </select>
-            </Col>
-            <Col>
-              <FieldLabel>Aufwand</FieldLabel>
-              <select value={v.aufwand} onChange={e => set("aufwand", e.target.value)} style={inputStyle}>
-                {AUFWAND_LIST.map(o => <option key={o} value={o}>{o}</option>)}
-              </select>
-            </Col>
-          </Row>
+          <div>
+            <FieldLabel>Priorität</FieldLabel>
+            <PrioAmpelPicker value={v.prio} onChange={p => set("prio", p)} />
+          </div>
+          <div>
+            <FieldLabel>Aufwand</FieldLabel>
+            <AufwandBarsPicker value={v.aufwand} onChange={a => set("aufwand", a)} />
+          </div>
 
           <Row>
             <Col>
@@ -1425,6 +1685,15 @@ function JobFormModal({ mode, job, team, onAiAction, onChatJobsCreated, onClose,
           <div>
             <FieldLabel>Notizen</FieldLabel>
             <textarea value={v.notizen} onChange={e => set("notizen", e.target.value)} rows={4} style={{ ...inputStyle, resize: "vertical", fontFamily: FONT_BODY }} />
+            {v.notizen.trim() && (
+              <div style={{ marginTop: 8, background: "rgba(201,162,39,0.08)", border: `1px solid ${Z.border}`, borderRadius: 8, padding: "9px 11px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+                  <i className="ti ti-notes" style={{ fontSize: 13, color: Z.gold }}></i>
+                  <span style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.05em", color: Z.gold }}>Vorschau</span>
+                </div>
+                {renderNotizen(v.notizen)}
+              </div>
+            )}
           </div>
 
           <div>
