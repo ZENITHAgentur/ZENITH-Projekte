@@ -26,6 +26,7 @@ const BEREICHE = [
   { key: "fotostudio", label: "Foto/Videoproduktion", short: "Foto/Video", icon: "ti-camera", accent: "#4F9CDB" },
   { key: "grafik", label: "Grafik/Nachbearbeitung", short: "Grafik", icon: "ti-palette", accent: "#A66FE0" },
   { key: "fotobox", label: "Fotobox", short: "Fotobox", icon: "ti-device-camera-phone", accent: "#E8963C" },
+  { key: "messebau", label: "Messebau", short: "Messebau", icon: "ti-building-store", accent: "#45B990" },
   { key: "hochzeiten", label: "Hochzeiten", short: "Hochzeiten", icon: "ti-heart", accent: "#E07A93", locked: true },
 ];
 const BEREICH_BY_KEY = Object.fromEntries(BEREICHE.map(b => [b.key, b]));
@@ -58,7 +59,7 @@ const QUICK_ADD = {
   },
   fotobox: {
     table: "fb_bookings",
-    title: "Neue Buchung",
+    title: "Neue Fotobox Buchung",
     fields: [
       { key: "title", label: "Titel", type: "text", required: true },
       { key: "location", label: "Ort", type: "text" },
@@ -83,6 +84,7 @@ const QUICK_ADD = {
     buildRow: (v) => ({ id: Date.now(), created_at: new Date().toISOString(), data: { ...v, status: "Anfrage" } }),
   },
   grafik: null,
+  messebau: null,
 };
 
 export default function App() {
@@ -100,7 +102,7 @@ export default function App() {
     async function load() {
       const [hz, js, fb, boxes] = await Promise.all([
         supabase.from("hz_hochzeiten").select("id,data,created_at"),
-        supabase.from("js_jobs").select("id,name,status,date,abgabe,prio").order("created_at", { ascending: false }),
+        supabase.from("js_jobs").select("id,name,status,date,abgabe,prio,bereich").order("created_at", { ascending: false }),
         supabase.from("fb_bookings").select("id,title,location,start_date,end_date,status").order("start_date", { ascending: true }),
         supabase.from("fb_boxes").select("id,name"),
       ]);
@@ -121,12 +123,17 @@ export default function App() {
   const upcomingWeddings = data.hochzeiten
     .filter(h => h.data?.hochzeitsDatum && h.data.hochzeitsDatum >= t)
     .sort((a, b) => a.data.hochzeitsDatum.localeCompare(b.data.hochzeitsDatum));
-  const openJobs = data.fotostudioJobs.filter(j => !["Abgeschlossen", "Archiviert", "Fertig"].includes(j.status));
+  const openJobsAll = data.fotostudioJobs.filter(j => !["Abgeschlossen", "Archiviert", "Fertig"].includes(j.status));
+  // Die alte Fotostudio-Jobliste führt Produktion (Foto/Video) und Grafik
+  // (Nachbearbeitung) als einen gemeinsamen Datensatz, unterschieden durch
+  // das Feld "bereich" - hier entsprechend gespiegelt.
+  const openJobs = openJobsAll.filter(j => j.bereich !== "Grafik");
+  const openJobsGrafik = openJobsAll.filter(j => j.bereich === "Grafik");
   const upcomingBookings = data.bookings
     .filter(b => b.start_date >= t && b.status !== "storniert")
     .sort((a, b) => a.start_date.localeCompare(b.start_date));
 
-  const metrics = { hochzeiten: upcomingWeddings.length, fotostudio: openJobs.length, fotobox: upcomingBookings.length, grafik: null };
+  const metrics = { hochzeiten: upcomingWeddings.length, fotostudio: openJobs.length, fotobox: upcomingBookings.length, grafik: openJobsGrafik.length, messebau: null };
 
   const handleInsert = async (bereichKey, row) => {
     const cfg = QUICK_ADD[bereichKey];
@@ -146,7 +153,8 @@ export default function App() {
         * { box-sizing: border-box; }
         body { margin: 0; }
         .zp-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
-        @media (min-width: 760px) { .zp-grid { grid-template-columns: repeat(4, 1fr); } }
+        @media (min-width: 640px) { .zp-grid { grid-template-columns: repeat(3, 1fr); } }
+        @media (min-width: 1000px) { .zp-grid { grid-template-columns: repeat(5, 1fr); } }
         .zp-nav-label { display: block; }
         @media (max-width: 640px) { .zp-nav-label { display: none; } }
         .zp-card:hover { border-color: rgba(255,255,255,0.16) !important; }
@@ -203,9 +211,20 @@ export default function App() {
             ))}
           </ListPreview>
         </BereichPage>}
-        {view === "grafik" && <BereichPage bereich={BEREICH_BY_KEY.grafik} loading={false} onAdd={() => setQuickAddTarget("grafik")}>
-          <EmptyNotice accent={BEREICH_BY_KEY.grafik.accent} title="Noch in Abstimmung"
-            text="Der Grafik-Bereich (Aufträge, Status, Zuständigkeit, Deadline) wird noch mit Philipp abgestimmt, bevor er hier konzipiert wird." />
+        {view === "grafik" && <BereichPage bereich={BEREICH_BY_KEY.grafik} loading={loading} onAdd={() => setQuickAddTarget("grafik")}>
+          <ListPreview title="Offene Grafik-Jobs" empty="Keine offenen Jobs." accent={BEREICH_BY_KEY.grafik.accent}>
+            {openJobsGrafik.map(j => (
+              <PreviewRow key={j.id} title={j.name} sub={j.status} right={j.date ? fmtDate(j.date) : (j.abgabe ? "AB " + fmtDate(j.abgabe) : "")} />
+            ))}
+          </ListPreview>
+          <div style={{ marginTop: 14 }}>
+            <EmptyNotice accent={BEREICH_BY_KEY.grafik.accent} title="Formular folgt"
+              text="Die Liste zeigt die bestehenden Grafik-Aufträge. Eigene Felder (Zuständigkeit, Deadline, Schnelleingabe) werden noch mit Philipp abgestimmt." />
+          </div>
+        </BereichPage>}
+        {view === "messebau" && <BereichPage bereich={BEREICH_BY_KEY.messebau} loading={false} onAdd={() => setQuickAddTarget("messebau")}>
+          <EmptyNotice accent={BEREICH_BY_KEY.messebau.accent} title="Noch in Abstimmung"
+            text="Hier entsteht die Übersicht für Messestände: nächste Messetermine, Daten & Fakten zum Stand sowie To-Do-Listen zur Abstimmung mit Team und Kunden. Wird mit Philipp im Detail geplant." />
         </BereichPage>}
       </div>
 
@@ -269,6 +288,7 @@ function Dashboard({ metrics, upcomingWeddings, openJobs, upcomingBookings, load
         <BereichCard bereich={BEREICH_BY_KEY.fotostudio} value={metrics.fotostudio} loading={loading} onClick={() => onNavigate("fotostudio")} />
         <BereichCard bereich={BEREICH_BY_KEY.grafik} value={metrics.grafik} loading={loading} onClick={() => onNavigate("grafik")} />
         <BereichCard bereich={BEREICH_BY_KEY.fotobox} value={metrics.fotobox} loading={loading} onClick={() => onNavigate("fotobox")} />
+        <BereichCard bereich={BEREICH_BY_KEY.messebau} value={metrics.messebau} loading={loading} onClick={() => onNavigate("messebau")} />
         <BereichCard bereich={BEREICH_BY_KEY.hochzeiten} value={metrics.hochzeiten} loading={loading} onClick={() => onNavigate("hochzeiten")} />
       </div>
 
@@ -440,7 +460,7 @@ function QuickAddModal({ bereichKey, bereich, boxId, onClose, onSubmit }) {
         <div style={{ background: Z.panel, border: `1px solid ${Z.border}`, borderRadius: 14, padding: 24, maxWidth: 360, textAlign: "center" }}>
           <i className="ti ti-messages" style={{ fontSize: 26, color: bereich?.accent }}></i>
           <div style={{ fontSize: 15, fontWeight: 700, marginTop: 10 }}>Noch nicht verfügbar</div>
-          <div style={{ fontSize: 13, color: Z.textSoft, marginTop: 6 }}>Das Grafik-Formular folgt, sobald der Bereich konzipiert ist.</div>
+          <div style={{ fontSize: 13, color: Z.textSoft, marginTop: 6 }}>Das Formular für {bereich?.label || "diesen Bereich"} folgt, sobald der Bereich konzipiert ist.</div>
           <div onClick={onClose} style={{ marginTop: 16, padding: "9px 16px", borderRadius: 9, border: `1px solid ${Z.border}`, cursor: "pointer", fontSize: 13, fontWeight: 600 }}>Schließen</div>
         </div>
       </div>
