@@ -1,5 +1,6 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { supabase } from "./lib/supabase.js";
+import { uploadAttachment, deleteAttachment } from "./lib/attachments.js";
 import { LOGO_B64 } from "./logo.js";
 
 // ─── ZENITH Projekte – Design-System (Dark, angelehnt an Moco) ────────────
@@ -51,7 +52,7 @@ const PROJEKTTYP_CFG = {
 const EMPTY_JOB_FORM = {
   name: "", status: "Neu", prio: "Mittel", aufwand: "Mittel", ort: "Im Haus",
   personen: [], date: "", date_end: "", dauer: "", abgabe: "", kontakt: "", notizen: "",
-  projekttyp: "Fotografie", kategorien: [],
+  projekttyp: "Fotografie", kategorien: [], attachments: [],
 };
 
 function fmtDate(iso) {
@@ -115,7 +116,29 @@ export default function App() {
   const [jobModal, setJobModal] = useState(null);
   const [addPickerOpen, setAddPickerOpen] = useState(false);
 
-  const JOB_FIELDS = "id,name,status,date,date_end,abgabe,dauer,prio,aufwand,kontakt,notizen,projekttyp,kategorien,personen,ort,bereich";
+  const JOB_FIELDS = "id,name,status,date,date_end,abgabe,dauer,prio,aufwand,kontakt,notizen,projekttyp,kategorien,personen,ort,bereich,attachments";
+  const [toast, setToast] = useState(null);
+  const showToast = (msg, ok = true) => {
+    setToast({ msg, ok });
+    setTimeout(() => setToast(t => (t?.msg === msg ? null : t)), 4500);
+  };
+
+  // Meldet einen auf "Archiviert" gesetzten Job an Moco (passende Firma im
+  // Firmenstamm bekommt eine Notiz "abrechnungsbereit"). Übernommen aus der
+  // alten Fotostudio-Jobliste - läuft best effort, blockiert das Speichern nie.
+  const notifyMocoArchive = async (job) => {
+    try {
+      const res = await fetch("/api/moco-archive", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ job }),
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || "Moco-Fehler");
+      if (result.matched) showToast(`✓ Moco benachrichtigt: "${result.companyName}" kann abgerechnet werden`);
+      else showToast(`Archiviert – keine passende Moco-Firma für "${result.searchTerm}" gefunden`, false);
+    } catch (e) {
+      showToast("Moco-Hinweis fehlgeschlagen: " + e.message, false);
+    }
+  };
 
   useEffect(() => {
     if (!appUnlocked) return;
@@ -177,12 +200,14 @@ export default function App() {
       ort: values.ort || "Im Haus", personen: values.personen || [], person: (values.personen || []).join(", "),
       date: values.date || null, date_end: values.date_end || null, dauer: values.dauer || null,
       abgabe: values.abgabe || null, kontakt: values.kontakt || "", notizen: values.notizen || "",
-      projekttyp: values.projekttyp || "Fotografie", kategorien: values.kategorien || [],
+      projekttyp: values.projekttyp || "Fotografie", kategorien: values.kategorien || [], attachments: values.attachments || [],
     };
     if (existingId) {
+      const vorherigerStatus = data.fotostudioJobs.find(j => j.id === existingId)?.status;
       const { data: updated, error } = await supabase.from("js_jobs").update(row).eq("id", existingId).select(JOB_FIELDS).single();
       if (error) throw error;
       setData(p => ({ ...p, fotostudioJobs: p.fotostudioJobs.map(j => j.id === existingId ? updated : j) }));
+      if (updated.status === "Archiviert" && vorherigerStatus !== "Archiviert") notifyMocoArchive(updated);
     } else {
       const { data: inserted, error } = await supabase.from("js_jobs").insert([row]).select(JOB_FIELDS).single();
       if (error) throw error;
@@ -198,6 +223,13 @@ export default function App() {
     const { data: updated, error } = await supabase.from("js_jobs").update({ status: next }).eq("id", job.id).select(JOB_FIELDS).single();
     if (error) { console.error(error.message); return; }
     setData(p => ({ ...p, fotostudioJobs: p.fotostudioJobs.map(j => j.id === job.id ? updated : j) }));
+    if (next === "Archiviert") notifyMocoArchive(updated);
+  };
+
+  // Jobs, die die KI-Erfassung (api/parse-input.js, ChatCapture im "Neuer
+  // Job"-Formular) aus Freitext/Diktat/Foto/PDF/Excel direkt angelegt hat.
+  const handleChatJobsCreated = (jobs) => {
+    setData(p => ({ ...p, fotostudioJobs: [...jobs, ...p.fotostudioJobs] }));
   };
 
   // Spiegelt die Schreibaktion des KI-Chats (api/ai-chat.js) in den lokalen
@@ -327,9 +359,15 @@ export default function App() {
       )}
 
       {jobModal && (
-        <JobFormModal mode={jobModal.mode} job={jobModal.job} team={team} onAiAction={applyAiAction}
+        <JobFormModal mode={jobModal.mode} job={jobModal.job} team={team} onAiAction={applyAiAction} onChatJobsCreated={handleChatJobsCreated}
           onClose={() => setJobModal(null)}
           onSubmit={async (values) => { await handleSaveJob(values, jobModal.job?.id); setJobModal(null); }} />
+      )}
+
+      {toast && (
+        <div style={{ position: "fixed", bottom: 26, left: 22, maxWidth: 360, background: toast.ok ? Z.panel : "#3A1E24", border: `1.5px solid ${toast.ok ? Z.border : Z.danger}`, color: Z.text, padding: "11px 16px", borderRadius: 10, fontSize: 13, fontWeight: 600, zIndex: 80, boxShadow: "0 10px 30px rgba(0,0,0,0.5)" }}>
+          {toast.msg}
+        </div>
       )}
     </div>
   );
@@ -500,7 +538,14 @@ function JobRow({ job, onOpen, onAdvance }) {
         {job.status}
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 13.5, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{job.name}</div>
+        <div style={{ fontSize: 13.5, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", display: "flex", alignItems: "center", gap: 6 }}>
+          {job.name}
+          {Array.isArray(job.attachments) && job.attachments.length > 0 && (
+            <span title={`${job.attachments.length} Anhang/Anhänge`} style={{ display: "inline-flex", alignItems: "center", gap: 2, fontSize: 10.5, fontWeight: 700, color: Z.textSoft, flexShrink: 0 }}>
+              <i className="ti ti-paperclip" style={{ fontSize: 11 }}></i>{job.attachments.length}
+            </span>
+          )}
+        </div>
         <div style={{ fontSize: 11.5, color: Z.textSoft, marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
           {[job.projekttyp, kategorien.join(", "), personen.join(", ")].filter(Boolean).join(" · ")}
         </div>
@@ -725,17 +770,141 @@ function ChipSelect({ options, selected, onToggle, accent = Z.gold }) {
   );
 }
 
+// ─── KI-Erfassung für die Job-Neuanlage ────────────────────────────────────
+// Freitext, Diktat (Web Speech API) und/oder ein angehängtes Foto/PDF/Excel
+// gehen an api/parse-input.js (Claude), das daraus einen oder mehrere Jobs
+// direkt anlegt. Übernommen aus der alten Fotostudio-Jobliste (ChatCapture).
+function ChatCapture({ team, onCreated }) {
+  const [text, setText] = useState("");
+  const [file, setFile] = useState(null);
+  const [listening, setListening] = useState(false);
+  const [stage, setStage] = useState(null); // null | 0 | 1 | 2 | "done" | "error"
+  const [errorMsg, setErrorMsg] = useState("");
+  const recognitionRef = useRef(null);
+  const timersRef = useRef([]);
+
+  const speechSupported = typeof window !== "undefined" && !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+  const busy = stage !== null && stage !== "error" && stage !== "done";
+
+  useEffect(() => () => {
+    recognitionRef.current?.stop();
+    timersRef.current.forEach(clearTimeout);
+  }, []);
+
+  const toggleMic = () => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) return;
+    if (listening) { recognitionRef.current?.stop(); return; }
+    const rec = new SR();
+    rec.lang = "de-DE"; rec.continuous = true; rec.interimResults = false;
+    rec.onresult = (e) => {
+      let addition = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        if (e.results[i].isFinal) addition += e.results[i][0].transcript + " ";
+      }
+      if (addition) setText(p => (p ? p + " " : "") + addition.trim());
+    };
+    rec.onend = () => setListening(false);
+    rec.onerror = () => setListening(false);
+    recognitionRef.current = rec;
+    rec.start();
+    setListening(true);
+  };
+
+  const handleFilePick = (e) => {
+    const f = e.target.files[0];
+    if (f) setFile(f);
+    e.target.value = "";
+  };
+
+  const handleSend = async () => {
+    const trimmed = text.trim();
+    if ((!trimmed && !file) || busy) return;
+    setErrorMsg(""); setStage(0);
+    timersRef.current.forEach(clearTimeout);
+    timersRef.current = [
+      setTimeout(() => setStage(s => (s === 0 ? 1 : s)), 900),
+      setTimeout(() => setStage(s => (s === 1 ? 2 : s)), 2400),
+    ];
+    try {
+      let fileBase64, mediaType;
+      if (file) {
+        mediaType = file.type || "application/pdf";
+        fileBase64 = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result.split(",")[1]);
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+        });
+      }
+      const res = await fetch("/api/parse-input", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: trimmed, fileBase64, mediaType, fileName: file?.name, team }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Erkennung fehlgeschlagen");
+      timersRef.current.forEach(clearTimeout);
+      if (data.count > 0) {
+        setStage("done");
+        onCreated(data.jobs || []);
+      } else {
+        setStage("error");
+        setErrorMsg("Kein Auftrag erkannt – bitte unten manuell eintragen.");
+      }
+    } catch (e) {
+      timersRef.current.forEach(clearTimeout);
+      setStage("error");
+      setErrorMsg(e.message);
+    }
+  };
+
+  const stageLabels = ["Lese Eingabe…", "KI analysiert…", "Job wird angelegt…"];
+  const canSend = (text.trim() || file) && !busy;
+
+  return (
+    <div style={{ background: Z.panelAlt, border: `1.5px solid ${Z.border}`, borderRadius: 12, padding: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+        <i className="ti ti-sparkles" style={{ fontSize: 15, color: Z.gold }}></i>
+        <div style={{ fontSize: 12, fontWeight: 700, color: Z.textSoft, textTransform: "uppercase", letterSpacing: "0.04em" }}>KI-Erfassung</div>
+      </div>
+      <textarea value={text} onChange={e => setText(e.target.value)} rows={3} placeholder="Auftrag diktieren/einfügen (z.B. Kunden-E-Mail) oder Foto/PDF/Excel anhängen…"
+        style={{ width: "100%", padding: "9px 11px", borderRadius: 9, border: `1.5px solid ${Z.border}`, background: Z.panel, color: Z.text, fontSize: 13.5, resize: "vertical", fontFamily: FONT_BODY, boxSizing: "border-box" }} />
+      {file && (
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6, fontSize: 12, color: Z.textSoft }}>
+          <i className="ti ti-paperclip" style={{ fontSize: 13 }}></i>{file.name}
+          <i className="ti ti-x" onClick={() => setFile(null)} style={{ fontSize: 13, cursor: "pointer" }}></i>
+        </div>
+      )}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+        <label style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 34, height: 34, borderRadius: 9, border: `1.5px solid ${Z.border}`, color: Z.textSoft, cursor: "pointer", flexShrink: 0 }}>
+          <i className="ti ti-paperclip" style={{ fontSize: 15 }}></i>
+          <input type="file" accept="image/*,application/pdf,.xlsx,.xls" onChange={handleFilePick} style={{ display: "none" }} />
+        </label>
+        {speechSupported && (
+          <div onClick={toggleMic} style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 34, height: 34, borderRadius: 9, border: `1.5px solid ${listening ? Z.danger : Z.border}`, color: listening ? Z.danger : Z.textSoft, cursor: "pointer", flexShrink: 0 }}>
+            <i className={`ti ${listening ? "ti-microphone" : "ti-microphone-2"}`} style={{ fontSize: 15 }}></i>
+          </div>
+        )}
+        <div onClick={handleSend} style={{ flex: 1, padding: "9px 14px", borderRadius: 9, background: canSend ? Z.gold : Z.border, color: canSend ? "#1A1A1A" : Z.textFaint, textAlign: "center", cursor: canSend ? "pointer" : "default", fontSize: 13, fontWeight: 700 }}>
+          {busy ? stageLabels[stage] || "…" : "Erkennen & anlegen"}
+        </div>
+      </div>
+      {errorMsg && <div style={{ color: Z.danger, fontSize: 12, marginTop: 8 }}>{errorMsg}</div>}
+    </div>
+  );
+}
+
 // ─── Foto-/Video-Job: Neuanlage & Bearbeitung ──────────────────────────────
 // Eigenes, reicheres Formular (statt der generischen Schnelleingabe), da hier
 // die volle Fachlogik der alten Jobliste nachgebildet wird: Status-Pipeline,
 // Projekttyp/Kategorien, Personen-Zuordnung, Shooting-Zeitraum, Ort.
-function JobFormModal({ mode, job, team, onAiAction, onClose, onSubmit }) {
+function JobFormModal({ mode, job, team, onAiAction, onChatJobsCreated, onClose, onSubmit }) {
   const [v, setV] = useState(() => mode === "edit" && job ? {
     name: job.name || "", status: job.status || "Neu", prio: job.prio || "Mittel", aufwand: job.aufwand || "Mittel",
     ort: job.ort || "Im Haus", personen: Array.isArray(job.personen) ? job.personen : [],
     date: job.date || "", date_end: job.date_end || "", dauer: job.dauer || "", abgabe: job.abgabe || "",
     kontakt: job.kontakt || "", notizen: job.notizen || "", projekttyp: job.projekttyp || "Fotografie",
-    kategorien: Array.isArray(job.kategorien) ? job.kategorien : [],
+    kategorien: Array.isArray(job.kategorien) ? job.kategorien : [], attachments: Array.isArray(job.attachments) ? job.attachments : [],
   } : EMPTY_JOB_FORM);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -749,6 +918,44 @@ function JobFormModal({ mode, job, team, onAiAction, onClose, onSubmit }) {
     if (action.type === "update_job" && action.row) {
       setV(p => ({ ...p, status: action.row.status ?? p.status, notizen: action.row.notizen ?? p.notizen }));
     }
+  };
+
+  // Moco-Firmen-Autocomplete beim Tippen des Jobnamens (api/moco-search.js).
+  const [mocoSuggestions, setMocoSuggestions] = useState([]);
+  const mocoDebounce = useRef(null);
+  const handleNameChange = (val) => {
+    set("name", val);
+    clearTimeout(mocoDebounce.current);
+    if (val.trim().length < 2) { setMocoSuggestions([]); return; }
+    mocoDebounce.current = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/moco-search?term=${encodeURIComponent(val.trim())}`);
+        const result = await res.json();
+        setMocoSuggestions(res.ok ? (result.companies || []) : []);
+      } catch { setMocoSuggestions([]); }
+    }, 350);
+  };
+
+  // Anhänge: Upload startet sofort beim Auswählen, nicht erst beim Speichern.
+  const [uploadingAttachments, setUploadingAttachments] = useState(false);
+  const handleAttachmentSelect = async (e) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = "";
+    if (files.length === 0) return;
+    setUploadingAttachments(true);
+    for (const file of files) {
+      try {
+        const meta = await uploadAttachment(file);
+        setV(p => ({ ...p, attachments: [...(p.attachments || []), meta] }));
+      } catch (err) {
+        setError(`"${file.name}" konnte nicht hochgeladen werden: ${err.message}`);
+      }
+    }
+    setUploadingAttachments(false);
+  };
+  const handleRemoveAttachment = async (att) => {
+    try { await deleteAttachment(att.path); } catch (err) { console.error("Anhang löschen fehlgeschlagen:", err.message); }
+    setV(p => ({ ...p, attachments: (p.attachments || []).filter(a => a.path !== att.path) }));
   };
 
   const handleSubmit = async () => {
@@ -775,6 +982,16 @@ function JobFormModal({ mode, job, team, onAiAction, onClose, onSubmit }) {
           <i className="ti ti-x" onClick={onClose} style={{ fontSize: 18, color: Z.textSoft, cursor: "pointer" }}></i>
         </div>
         <div style={{ padding: "16px 18px", display: "flex", flexDirection: "column", gap: 14, overflowY: "auto" }}>
+          {mode === "new" && (
+            <>
+              <ChatCapture team={team} onCreated={jobs => { onChatJobsCreated && onChatJobsCreated(jobs); onClose(); }} />
+              <div style={{ display: "flex", alignItems: "center", gap: 10, color: Z.textFaint, fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                <div style={{ flex: 1, height: 1, background: Z.border }} />
+                oder manuell
+                <div style={{ flex: 1, height: 1, background: Z.border }} />
+              </div>
+            </>
+          )}
           {mode === "edit" && (
             <div>
               <FieldLabel>Status</FieldLabel>
@@ -794,9 +1011,19 @@ function JobFormModal({ mode, job, team, onAiAction, onClose, onSubmit }) {
             <ChatPanel compact context={{ bereich: "fotostudio", jobId: job.id, job: { name: v.name, status: v.status, date: v.date, abgabe: v.abgabe }, team }} onAction={handleChatAction} />
           )}
 
-          <div>
+          <div style={{ position: "relative" }}>
             <FieldLabel>Jobname / Kunde *</FieldLabel>
-            <input type="text" value={v.name} onChange={e => set("name", e.target.value)} style={inputStyle} autoFocus />
+            <input type="text" value={v.name} onChange={e => handleNameChange(e.target.value)}
+              onBlur={() => setTimeout(() => setMocoSuggestions([]), 150)} style={inputStyle} autoFocus />
+            {mocoSuggestions.length > 0 && (
+              <div style={{ position: "absolute", top: "100%", left: 0, right: 0, marginTop: 4, background: Z.panelAlt, border: `1px solid ${Z.border}`, borderRadius: 9, overflow: "hidden", zIndex: 5, boxShadow: "0 8px 20px rgba(0,0,0,0.4)" }}>
+                <div style={{ padding: "6px 11px", fontSize: 10, fontWeight: 700, color: Z.textFaint, textTransform: "uppercase", letterSpacing: "0.05em" }}>Aus dem Moco-Firmenstamm</div>
+                {mocoSuggestions.map(c => (
+                  <div key={c.id} onMouseDown={() => { set("name", c.name); setMocoSuggestions([]); }}
+                    style={{ padding: "8px 11px", fontSize: 13.5, cursor: "pointer", borderTop: `1px solid ${Z.borderSoft}` }}>{c.name}</div>
+                ))}
+              </div>
+            )}
           </div>
 
           <Row>
@@ -873,6 +1100,26 @@ function JobFormModal({ mode, job, team, onAiAction, onClose, onSubmit }) {
           <div>
             <FieldLabel>Notizen</FieldLabel>
             <textarea value={v.notizen} onChange={e => set("notizen", e.target.value)} rows={4} style={{ ...inputStyle, resize: "vertical", fontFamily: FONT_BODY }} />
+          </div>
+
+          <div>
+            <FieldLabel>Anhänge</FieldLabel>
+            {(v.attachments || []).length > 0 && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 8 }}>
+                {v.attachments.map(att => (
+                  <div key={att.path} style={{ display: "flex", alignItems: "center", gap: 8, background: Z.panelAlt, border: `1px solid ${Z.border}`, borderRadius: 8, padding: "7px 10px" }}>
+                    <i className="ti ti-paperclip" style={{ fontSize: 14, color: Z.textSoft }}></i>
+                    <a href={att.url} target="_blank" rel="noreferrer" style={{ flex: 1, minWidth: 0, color: Z.text, fontSize: 12.5, textDecoration: "none", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{att.name}</a>
+                    <i className="ti ti-trash" onClick={() => handleRemoveAttachment(att)} style={{ fontSize: 14, color: Z.textSoft, cursor: "pointer" }}></i>
+                  </div>
+                ))}
+              </div>
+            )}
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "8px 14px", borderRadius: 9, border: `1.5px dashed ${Z.border}`, color: Z.textSoft, fontSize: 12.5, fontWeight: 600, cursor: uploadingAttachments ? "wait" : "pointer" }}>
+              <i className="ti ti-upload" style={{ fontSize: 14 }}></i>
+              {uploadingAttachments ? "Lädt hoch…" : "Bild/PDF hochladen"}
+              <input type="file" accept="image/*,application/pdf" multiple onChange={handleAttachmentSelect} disabled={uploadingAttachments} style={{ display: "none" }} />
+            </label>
           </div>
 
           {error && <div style={{ color: Z.danger, fontSize: 12.5 }}>{error}</div>}
