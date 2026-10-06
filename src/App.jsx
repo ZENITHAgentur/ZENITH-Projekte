@@ -53,8 +53,19 @@ const PROJEKTTYP_CFG = {
 const EMPTY_JOB_FORM = {
   name: "", status: "Neu", prio: "Mittel", aufwand: "Mittel", ort: "Im Haus",
   personen: [], date: "", date_end: "", dauer: "", abgabe: "", kontakt: "", notizen: "",
-  projekttyp: "Fotografie", kategorien: [], attachments: [],
+  projekttyp: "Fotografie", kategorien: [], attachments: [], stationen: [],
 };
+
+// Studio-Grundriss (Aufnahmeplätze), aus der alten Fotostudio-Jobliste übernommen.
+const STUDIO_ZONES = [
+  { id: 1, x: 78, y: 503, w: 190, h: 141 },
+  { id: 2, x: 78, y: 298, w: 190, h: 141 },
+  { id: 3, x: 283, y: 318, w: 190, h: 327 },
+  { id: 4, x: 313, y: 198, w: 215, h: 98 },
+  { id: 5, x: 498, y: 318, w: 175, h: 175 },
+  { id: 6, x: 498, y: 503, w: 175, h: 141 },
+  { id: 7, x: 708, y: 168, w: 250, h: 477 },
+];
 
 function fmtDate(iso) {
   if (!iso) return "–";
@@ -64,6 +75,22 @@ function fmtDate(iso) {
 }
 function today() {
   return new Date().toISOString().split("T")[0];
+}
+// Prüft, ob ein Datum (iso) im Shooting-Zeitraum eines Jobs liegt (date = Start,
+// date_end = optionales Ende bei mehrtägigen Produktionen).
+function jobActiveOn(job, iso) {
+  if (!job.date) return false;
+  return iso >= job.date && iso <= (job.date_end || job.date);
+}
+function toISO(d) { return d.toISOString().split("T")[0]; }
+function addDays(d, n) { const r = new Date(d); r.setDate(r.getDate() + n); return r; }
+function startOfWeek(d) { const r = new Date(d); const dow = (r.getDay() + 6) % 7; r.setDate(r.getDate() - dow); r.setHours(0, 0, 0, 0); return r; }
+function startOfMonthGrid(d) { return startOfWeek(new Date(d.getFullYear(), d.getMonth(), 1)); }
+function isoWeek(iso) {
+  const d = new Date(iso + "T00:00:00");
+  d.setDate(d.getDate() + 4 - (d.getDay() || 7));
+  const yearStart = new Date(d.getFullYear(), 0, 1);
+  return Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
 }
 
 // ─── Schnelleingabe: Felder & Ziel-Tabelle je Bereich ──────────────────────
@@ -116,8 +143,10 @@ export default function App() {
   const [quickAddTarget, setQuickAddTarget] = useState(null);
   const [jobModal, setJobModal] = useState(null);
   const [addPickerOpen, setAddPickerOpen] = useState(false);
+  const [fotoSearch, setFotoSearch] = useState("");
+  const [grafikSearch, setGrafikSearch] = useState("");
 
-  const JOB_FIELDS = "id,name,status,date,date_end,abgabe,dauer,prio,aufwand,kontakt,notizen,projekttyp,kategorien,personen,ort,bereich,attachments";
+  const JOB_FIELDS = "id,name,status,date,date_end,abgabe,dauer,prio,aufwand,kontakt,notizen,projekttyp,kategorien,personen,ort,bereich,attachments,stationen";
   const [toast, setToast] = useState(null);
   const showToast = (msg, ok = true) => {
     setToast({ msg, ok });
@@ -209,6 +238,16 @@ export default function App() {
   // das Feld "bereich" - hier entsprechend gespiegelt.
   const openJobs = openJobsAll.filter(j => j.bereich !== "Grafik");
   const openJobsGrafik = openJobsAll.filter(j => j.bereich === "Grafik");
+  // Suche wirkt nur auf die Anzeige (Name/Kontakt/Notizen/Personen), wie in
+  // der alten Fotostudio-Jobliste.
+  const matchesSearch = (job, term) => {
+    if (!term.trim()) return true;
+    const haystack = [job.name, job.kontakt, job.notizen, ...(job.personen || [])].join(" ").toLowerCase();
+    return haystack.includes(term.trim().toLowerCase());
+  };
+  const visibleFotoJobs = openJobs.filter(j => matchesSearch(j, fotoSearch));
+  const visibleGrafikJobs = openJobsGrafik.filter(j => matchesSearch(j, grafikSearch));
+  const todaysFotoJobs = openJobsAll.filter(j => j.bereich !== "Grafik" && jobActiveOn(j, t));
   const upcomingBookings = data.bookings
     .filter(b => b.start_date >= t && b.status !== "storniert")
     .sort((a, b) => a.start_date.localeCompare(b.start_date));
@@ -235,6 +274,7 @@ export default function App() {
       date: values.date || null, date_end: values.date_end || null, dauer: values.dauer || null,
       abgabe: values.abgabe || null, kontakt: values.kontakt || "", notizen: values.notizen || "",
       projekttyp: values.projekttyp || "Fotografie", kategorien: values.kategorien || [], attachments: values.attachments || [],
+      stationen: values.ort === "Außer Haus" ? [] : (values.stationen || []),
     };
     if (existingId) {
       const vorher = data.fotostudioJobs.find(j => j.id === existingId);
@@ -264,6 +304,15 @@ export default function App() {
     if (error) { console.error(error.message); return; }
     setData(p => ({ ...p, fotostudioJobs: p.fotostudioJobs.map(j => j.id === job.id ? updated : j) }));
     if (next === "Archiviert") notifyMocoArchive(updated);
+  };
+
+  // Setzt das Shooting-Datum eines Jobs auf heute - wird vom "Heute"-Ablagefeld
+  // (Drag & Drop aus der Liste, siehe TodayPanel) aufgerufen.
+  const handleScheduleToday = async (jobId) => {
+    const t = today();
+    const { data: updated, error } = await supabase.from("js_jobs").update({ date: t }).eq("id", jobId).select(JOB_FIELDS).single();
+    if (error) { console.error(error.message); return; }
+    setData(p => ({ ...p, fotostudioJobs: p.fotostudioJobs.map(j => j.id === jobId ? updated : j) }));
   };
 
   // Jobs, die die KI-Erfassung (api/parse-input.js, ChatCapture im "Neuer
@@ -325,7 +374,7 @@ export default function App() {
 
       <div style={{ maxWidth: PAGE_MAX, margin: "0 auto", padding: "26px 20px 80px" }}>
         {view === "dashboard" && (
-          <Dashboard metrics={metrics} upcomingWeddings={upcomingWeddings} openJobs={openJobs} openJobsGrafik={openJobsGrafik} upcomingBookings={upcomingBookings} loading={loading} onNavigate={setView} team={team} onAiAction={applyAiAction} />
+          <Dashboard metrics={metrics} upcomingWeddings={upcomingWeddings} openJobs={openJobs} openJobsGrafik={openJobsGrafik} todaysFotoJobs={todaysFotoJobs} upcomingBookings={upcomingBookings} loading={loading} onNavigate={setView} onOpenJob={j => setJobModal({ mode: "edit", job: j })} team={team} onAiAction={applyAiAction} />
         )}
         {view === "hochzeiten" && !weddingUnlocked && (
           <PasswordGate endpoint="/api/check-wedding-password" storageKey="zp-wedding-unlocked" accent={BEREICH_BY_KEY.hochzeiten.accent}
@@ -333,8 +382,14 @@ export default function App() {
             onUnlock={() => setWeddingUnlocked(true)} />
         )}
         {view === "fotostudio" && <BereichPage bereich={BEREICH_BY_KEY.fotostudio} loading={loading} onAdd={() => setJobModal({ mode: "new" })}>
-          <ListPreview title="Offene Jobs" empty="Keine offenen Jobs." accent={BEREICH_BY_KEY.fotostudio.accent}>
-            {openJobs.map(j => (
+          <div className="zp-grid" style={{ marginBottom: 18 }}>
+            <TodayDropPanel jobs={openJobs} onOpen={j => setJobModal({ mode: "edit", job: j })} onDropJob={handleScheduleToday} />
+            <KalenderWidget jobs={openJobs} onOpen={j => setJobModal({ mode: "edit", job: j })} />
+            <StudioOccupancyWidget jobs={openJobs} onOpen={j => setJobModal({ mode: "edit", job: j })} />
+          </div>
+          <SearchBox value={fotoSearch} onChange={setFotoSearch} placeholder="Suche nach Name, Kontakt, Notiz, Person…" />
+          <ListPreview title="Offene Jobs" empty={fotoSearch ? "Keine Treffer für diese Suche." : "Keine offenen Jobs."} accent={BEREICH_BY_KEY.fotostudio.accent}>
+            {visibleFotoJobs.map(j => (
               <JobRow key={j.id} job={j} onOpen={() => setJobModal({ mode: "edit", job: j })} onAdvance={() => handleStatusAdvance(j)} />
             ))}
           </ListPreview>
@@ -354,8 +409,9 @@ export default function App() {
           </ListPreview>
         </BereichPage>}
         {view === "grafik" && <BereichPage bereich={BEREICH_BY_KEY.grafik} loading={loading} onAdd={() => setQuickAddTarget("grafik")}>
-          <ListPreview title="Offene Grafik-Jobs" empty="Keine offenen Jobs." accent={BEREICH_BY_KEY.grafik.accent}>
-            {openJobsGrafik.map(j => (
+          <SearchBox value={grafikSearch} onChange={setGrafikSearch} placeholder="Suche nach Name, Kontakt, Notiz, Person…" />
+          <ListPreview title="Offene Grafik-Jobs" empty={grafikSearch ? "Keine Treffer für diese Suche." : "Keine offenen Jobs."} accent={BEREICH_BY_KEY.grafik.accent}>
+            {visibleGrafikJobs.map(j => (
               <PreviewRow key={j.id} title={j.name} sub={j.status} right={j.date ? fmtDate(j.date) : (j.abgabe ? "AB " + fmtDate(j.abgabe) : "")} />
             ))}
           </ListPreview>
@@ -444,7 +500,7 @@ function NavItem({ active, onClick, icon, label, accent }) {
   );
 }
 
-function Dashboard({ metrics, upcomingWeddings, openJobs, openJobsGrafik, upcomingBookings, loading, onNavigate, team, onAiAction }) {
+function Dashboard({ metrics, upcomingWeddings, openJobs, openJobsGrafik, todaysFotoJobs, upcomingBookings, loading, onNavigate, onOpenJob, team, onAiAction }) {
   const d = new Date();
   const weekday = d.toLocaleDateString("de-DE", { weekday: "long" });
   const dateStr = d.toLocaleDateString("de-DE", { day: "2-digit", month: "long", year: "numeric" });
@@ -460,6 +516,30 @@ function Dashboard({ metrics, upcomingWeddings, openJobs, openJobsGrafik, upcomi
       <div style={{ marginBottom: 24 }}>
         <div style={{ fontSize: 12, color: Z.textSoft, textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 600 }}>{weekday}, {dateStr}</div>
         <div style={{ fontSize: 26, fontWeight: 700, marginTop: 4 }}>Übersicht</div>
+      </div>
+
+      {/* ── Heute: was unmittelbar ansteht, direkt oben auf der Übersicht ── */}
+      <div style={{ background: Z.panel, border: `1.5px solid ${Z.gold}`, borderRadius: 14, padding: "14px 16px", marginBottom: 24 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: todaysFotoJobs.length ? 10 : 0 }}>
+          <i className="ti ti-sun-high" style={{ fontSize: 16, color: Z.gold }}></i>
+          <div style={{ fontSize: 13, fontWeight: 800, color: Z.text, textTransform: "uppercase", letterSpacing: "0.04em" }}>Heute</div>
+          <div style={{ fontSize: 11.5, fontWeight: 700, color: Z.textSoft, background: Z.panelAlt, borderRadius: 10, padding: "1px 8px" }}>{todaysFotoJobs.length}</div>
+        </div>
+        {todaysFotoJobs.length === 0 ? (
+          <div style={{ fontSize: 13, color: Z.textFaint }}>Keine Foto-/Video-Jobs für heute eingeplant.</div>
+        ) : (
+          <div style={{ display: "flex", gap: 10, overflowX: "auto", paddingBottom: 2 }}>
+            {todaysFotoJobs.map(j => {
+              const sc = STATUS_CFG[j.status] || STATUS_CFG["Neu"];
+              return (
+                <div key={j.id} onClick={() => onOpenJob(j)} style={{ flexShrink: 0, minWidth: 200, maxWidth: 240, background: Z.panelAlt, border: `1px solid ${Z.border}`, borderLeft: `3px solid ${sc.color}`, borderRadius: 9, padding: "9px 12px", cursor: "pointer" }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{j.name}</div>
+                  <div style={{ fontSize: 11, color: Z.textSoft, marginTop: 2 }}>{j.status}{j.personen?.length ? " · " + j.personen.join(", ") : ""}</div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       <div className="zp-grid" style={{ marginBottom: 30 }}>
@@ -575,6 +655,182 @@ function PreviewRow({ title, sub, right }) {
   );
 }
 
+// ─── Suche (wie in der alten Fotostudio-Jobliste: Name/Kontakt/Notizen/Personen) ──
+function SearchBox({ value, onChange, placeholder }) {
+  return (
+    <div style={{ position: "relative", marginBottom: 14 }}>
+      <i className="ti ti-search" style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", fontSize: 15, color: Z.textFaint }}></i>
+      <input type="text" value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
+        style={{ width: "100%", padding: "9px 12px 9px 36px", borderRadius: 9, border: `1.5px solid ${Z.border}`, background: Z.panelAlt, color: Z.text, fontSize: 14, boxSizing: "border-box" }} />
+      {value && (
+        <i className="ti ti-x" onClick={() => onChange("")} style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", fontSize: 14, color: Z.textSoft, cursor: "pointer" }}></i>
+      )}
+    </div>
+  );
+}
+
+// ─── "Heute"-Ablage: zeigt heutige Jobs, nimmt per Drag & Drop aus der Liste
+// einen Job entgegen und plant ihn für heute ein (date = heute). ──────────
+function TodayDropPanel({ jobs, onOpen, onDropJob }) {
+  const [over, setOver] = useState(false);
+  const todaysJobs = jobs.filter(j => jobActiveOn(j, today()));
+  return (
+    <div
+      onDragOver={e => { e.preventDefault(); setOver(true); }}
+      onDragLeave={() => setOver(false)}
+      onDrop={e => { e.preventDefault(); setOver(false); const id = e.dataTransfer.getData("text/job-id"); if (id) onDropJob(id); }}
+      style={{ background: over ? "rgba(201,162,39,0.12)" : Z.panel, border: `1.5px solid ${over ? Z.gold : Z.border}`, borderRadius: 14, padding: "12px 14px", transition: "background .1s, border-color .1s" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+        <i className="ti ti-sun-high" style={{ fontSize: 15, color: Z.gold }}></i>
+        <div style={{ fontSize: 12, fontWeight: 800, color: Z.textSoft, textTransform: "uppercase", letterSpacing: "0.04em" }}>Heute</div>
+        <div style={{ fontSize: 11, fontWeight: 700, color: Z.textSoft, background: Z.panelAlt, borderRadius: 10, padding: "1px 8px" }}>{todaysJobs.length}</div>
+      </div>
+      {todaysJobs.length === 0 ? (
+        <div style={{ fontSize: 12.5, color: Z.textFaint }}>Keine Jobs für heute geplant – Job-Zeile aus der Liste hierher ziehen.</div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {todaysJobs.map(j => (
+            <div key={j.id} onClick={() => onOpen(j)} style={{ fontSize: 13, fontWeight: 600, padding: "7px 10px", background: Z.panelAlt, borderRadius: 7, cursor: "pointer", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{j.name}</div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Kalenderansicht (Mini-Widget: Woche/Monat, Klick auf Tag zeigt Jobs) ──
+function KalenderWidget({ jobs, onOpen }) {
+  const [openPanel, setOpenPanel] = useState(() => { try { return localStorage.getItem("zp-cal-open") !== "0"; } catch { return true; } });
+  const [mode, setMode] = useState(() => { try { return localStorage.getItem("zp-cal-mode") || "woche"; } catch { return "woche"; } });
+  const [anchor, setAnchor] = useState(() => new Date());
+  const [openDay, setOpenDay] = useState(null);
+  useEffect(() => { try { localStorage.setItem("zp-cal-mode", mode); } catch {} }, [mode]);
+  useEffect(() => { try { localStorage.setItem("zp-cal-open", openPanel ? "1" : "0"); } catch {} }, [openPanel]);
+
+  const todayStr = today();
+  const jobsByDate = {};
+  jobs.forEach(j => {
+    if (!j.date) return;
+    const d = new Date(j.date + "T00:00:00");
+    for (let i = 0; i < 90 && toISO(d) <= (j.date_end || j.date); i++, d.setDate(d.getDate() + 1)) {
+      (jobsByDate[toISO(d)] ||= []).push(j);
+    }
+  });
+
+  const isWoche = mode === "woche";
+  const start = isWoche ? startOfWeek(anchor) : startOfMonthGrid(anchor);
+  const days = Array.from({ length: isWoche ? 7 : 42 }, (_, i) => addDays(start, i));
+  const monthAnchor = anchor.getMonth();
+  const dayLabels = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"];
+  const navigate = (dir) => setAnchor(a => { const n = new Date(a); if (isWoche) n.setDate(n.getDate() + dir * 7); else n.setMonth(n.getMonth() + dir); return n; });
+
+  return (
+    <div style={{ background: Z.panel, border: `1px solid ${Z.border}`, borderRadius: 14, padding: "12px 14px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: openPanel ? 10 : 0 }}>
+        <i className="ti ti-calendar" style={{ fontSize: 15, color: Z.gold }}></i>
+        <div style={{ fontSize: 12, fontWeight: 800, color: Z.textSoft, textTransform: "uppercase", letterSpacing: "0.04em" }}>Kalender</div>
+        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
+          {openPanel && <div style={{ fontSize: 11, color: Z.textSoft, fontWeight: 600 }}>{isWoche ? `KW ${isoWeek(toISO(start))}` : anchor.toLocaleDateString("de-DE", { month: "long", year: "numeric" })}</div>}
+          <i className={`ti ${openPanel ? "ti-chevron-up" : "ti-chevron-down"}`} onClick={() => setOpenPanel(o => !o)} style={{ cursor: "pointer", color: Z.textSoft, fontSize: 15 }}></i>
+        </div>
+      </div>
+      {openPanel && (
+        <>
+          <div style={{ display: "flex", background: Z.panelAlt, borderRadius: 8, overflow: "hidden", marginBottom: 8 }}>
+            {["woche", "monat"].map(m => (
+              <div key={m} onClick={() => setMode(m)} style={{ flex: 1, textAlign: "center", padding: "5px 0", cursor: "pointer", fontSize: 11, fontWeight: 700, background: mode === m ? Z.gold : "transparent", color: mode === m ? "#1A1A1A" : Z.textSoft }}>{m === "woche" ? "Woche" : "Monat"}</div>
+            ))}
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+            <i className="ti ti-chevron-left" onClick={() => navigate(-1)} style={{ cursor: "pointer", color: Z.textSoft, width: 24, textAlign: "center" }}></i>
+            <div onClick={() => setAnchor(new Date())} style={{ flex: 1, textAlign: "center", fontSize: 11.5, fontWeight: 700, color: Z.textSoft, cursor: "pointer" }}>Heute</div>
+            <i className="ti ti-chevron-right" onClick={() => navigate(1)} style={{ cursor: "pointer", color: Z.textSoft, width: 24, textAlign: "center" }}></i>
+          </div>
+          {!isWoche && (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", marginBottom: 2 }}>
+              {dayLabels.map(l => <div key={l} style={{ textAlign: "center", fontSize: 9, fontWeight: 600, color: Z.textFaint, textTransform: "uppercase" }}>{l}</div>)}
+            </div>
+          )}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 3 }}>
+            {days.map((d, i) => {
+              const iso = toISO(d);
+              const isToday = iso === todayStr;
+              const inMonth = isWoche ? true : d.getMonth() === monthAnchor;
+              const count = (jobsByDate[iso] || []).length;
+              const isOpen = openDay === iso;
+              return (
+                <div key={iso + i} onClick={() => setOpenDay(isOpen ? null : iso)}
+                  style={{ textAlign: "center", padding: isWoche ? "6px 1px" : "4px 1px", borderRadius: 7, cursor: "pointer", opacity: inMonth ? 1 : 0.35,
+                    background: isOpen ? Z.gold : isToday ? "rgba(201,162,39,0.15)" : "transparent", border: `1.5px solid ${isToday && !isOpen ? Z.gold : "transparent"}` }}>
+                  {isWoche && <div style={{ fontSize: 8, fontWeight: 600, color: isOpen ? "#1A1A1A" : Z.textFaint, textTransform: "uppercase" }}>{dayLabels[i]}</div>}
+                  <div style={{ fontSize: isWoche ? 12 : 11, fontWeight: isToday ? 800 : 600, color: isOpen ? "#1A1A1A" : isToday ? Z.gold : Z.text }}>{d.getDate()}</div>
+                  {count > 0 && <div style={{ width: 5, height: 5, borderRadius: "50%", background: isOpen ? "#1A1A1A" : Z.gold, margin: "3px auto 0" }} />}
+                </div>
+              );
+            })}
+          </div>
+          {openDay && (
+            <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 5 }}>
+              {(jobsByDate[openDay] || []).length === 0 ? (
+                <div style={{ fontSize: 11.5, color: Z.textFaint }}>Keine Jobs an diesem Tag.</div>
+              ) : jobsByDate[openDay].map(j => (
+                <div key={j.id} onClick={() => onOpen(j)} style={{ fontSize: 12, fontWeight: 600, color: Z.text, padding: "6px 9px", background: Z.panelAlt, borderRadius: 7, cursor: "pointer", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{j.name}</div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// ─── Studio-Grundriss (Aufnahmeplätze) ─────────────────────────────────────
+function StudioFloorplan({ selected = [], occupied = {}, onToggleZone, onZoneClick, height = 300 }) {
+  return (
+    <svg viewBox="0 0 1000 710" style={{ width: "100%", height, display: "block" }}>
+      <rect x="40" y="40" width="920" height="630" fill="none" stroke={Z.border} strokeWidth="4" rx="4" />
+      {STUDIO_ZONES.map(z => {
+        const isSelected = selected.includes(z.id);
+        const job = occupied[z.id];
+        const fill = job ? "rgba(224,96,122,0.18)" : isSelected ? "rgba(201,162,39,0.18)" : Z.panelAlt;
+        const stroke = job ? Z.danger : isSelected ? Z.gold : Z.border;
+        const clickable = !!(onToggleZone || (job && onZoneClick));
+        return (
+          <g key={z.id} onClick={() => { if (onToggleZone) onToggleZone(z.id); else if (job && onZoneClick) onZoneClick(job); }} style={{ cursor: clickable ? "pointer" : "default" }}>
+            <rect x={z.x} y={z.y} width={z.w} height={z.h} rx="10" fill={fill} stroke={stroke} strokeWidth={isSelected || job ? 3 : 2} />
+            <text x={z.x + z.w / 2} y={z.y + 30} textAnchor="middle" fontSize="24" fontWeight="800" fill={job ? Z.danger : isSelected ? Z.gold : Z.textSoft}>{z.id}</text>
+            {job ? (
+              <text x={z.x + z.w / 2} y={z.y + z.h / 2 + 8} textAnchor="middle" fontSize="13" fontWeight="600" fill={Z.text}>{job.name.length > 20 ? job.name.slice(0, 18) + "…" : job.name}</text>
+            ) : !onToggleZone ? (
+              <text x={z.x + z.w / 2} y={z.y + z.h / 2 + 8} textAnchor="middle" fontSize="12" fill={Z.textFaint}>frei</text>
+            ) : null}
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
+function StudioOccupancyWidget({ jobs, onOpen }) {
+  const [openPanel, setOpenPanel] = useState(true);
+  const todayStr = today();
+  const occupied = {};
+  jobs.forEach(j => {
+    if (!jobActiveOn(j, todayStr) || j.ort === "Außer Haus" || !Array.isArray(j.stationen)) return;
+    j.stationen.forEach(z => { if (!occupied[z]) occupied[z] = j; });
+  });
+  return (
+    <div style={{ background: Z.panel, border: `1px solid ${Z.border}`, borderRadius: 14, padding: "12px 14px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: openPanel ? 8 : 0 }}>
+        <i className="ti ti-layout-grid" style={{ fontSize: 15, color: Z.gold }}></i>
+        <div style={{ fontSize: 12, fontWeight: 800, color: Z.textSoft, textTransform: "uppercase", letterSpacing: "0.04em" }}>Studio · Heute</div>
+        <i className={`ti ${openPanel ? "ti-chevron-up" : "ti-chevron-down"}`} onClick={() => setOpenPanel(o => !o)} style={{ marginLeft: "auto", cursor: "pointer", color: Z.textSoft, fontSize: 15 }}></i>
+      </div>
+      {openPanel && <StudioFloorplan occupied={occupied} onZoneClick={onOpen} height={280} />}
+    </div>
+  );
+}
+
 // ─── Job-Zeile Foto-/Videoproduktion ───────────────────────────────────────
 // Klick auf die Zeile öffnet die Detailansicht, Klick auf den Status-Pill
 // schaltet den Status direkt weiter (häufigster Alltags-Workflow).
@@ -583,7 +839,9 @@ function JobRow({ job, onOpen, onAdvance }) {
   const kategorien = Array.isArray(job.kategorien) ? job.kategorien : [];
   const personen = Array.isArray(job.personen) ? job.personen : [];
   return (
-    <div onClick={onOpen} style={{ padding: "12px 16px", borderBottom: `1px solid ${Z.borderSoft}`, display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
+    <div draggable onDragStart={e => e.dataTransfer.setData("text/job-id", job.id)}
+      onClick={onOpen} title="Ziehen, um auf „Heute“ einzuplanen"
+      style={{ padding: "12px 16px", borderBottom: `1px solid ${Z.borderSoft}`, display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
       <div onClick={e => { e.stopPropagation(); onAdvance(); }} title="Status weiterschalten"
         style={{ flexShrink: 0, padding: "3px 9px", borderRadius: 20, fontSize: 10.5, fontWeight: 700, color: statusColor, border: `1.5px solid ${statusColor}`, cursor: "pointer", whiteSpace: "nowrap" }}>
         {job.status}
@@ -956,6 +1214,7 @@ function JobFormModal({ mode, job, team, onAiAction, onChatJobsCreated, onClose,
     date: job.date || "", date_end: job.date_end || "", dauer: job.dauer || "", abgabe: job.abgabe || "",
     kontakt: job.kontakt || "", notizen: job.notizen || "", projekttyp: job.projekttyp || "Fotografie",
     kategorien: Array.isArray(job.kategorien) ? job.kategorien : [], attachments: Array.isArray(job.attachments) ? job.attachments : [],
+    stationen: Array.isArray(job.stationen) ? job.stationen : [],
   } : EMPTY_JOB_FORM);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -1091,6 +1350,15 @@ function JobFormModal({ mode, job, team, onAiAction, onChatJobsCreated, onClose,
               </select>
             </Col>
           </Row>
+
+          {v.ort === "Im Haus" && (
+            <div>
+              <FieldLabel>Aufnahmeplatz im Studio</FieldLabel>
+              <div style={{ background: Z.panelAlt, border: `1px solid ${Z.border}`, borderRadius: 10, padding: 10 }}>
+                <StudioFloorplan selected={v.stationen} onToggleZone={id => toggleIn("stationen", id)} height={220} />
+              </div>
+            </div>
+          )}
 
           <div>
             <FieldLabel>Kategorien</FieldLabel>
