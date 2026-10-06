@@ -43,6 +43,7 @@ const STATUS_CFG = {
   "Archiviert": { color: "#A66FE0" },
 };
 const PRIO_LIST = ["Hoch", "Mittel", "Niedrig"];
+const PRIO_ORDER = { "Hoch": 0, "Mittel": 1, "Niedrig": 2 };
 const AUFWAND_LIST = ["Klein", "Mittel", "Groß"];
 const ORT_LIST = ["Im Haus", "Außer Haus"];
 const PROJEKTTYP_CFG = {
@@ -324,7 +325,7 @@ export default function App() {
 
       <div style={{ maxWidth: PAGE_MAX, margin: "0 auto", padding: "26px 20px 80px" }}>
         {view === "dashboard" && (
-          <Dashboard metrics={metrics} upcomingWeddings={upcomingWeddings} openJobs={openJobs} upcomingBookings={upcomingBookings} loading={loading} onNavigate={setView} team={team} onAiAction={applyAiAction} />
+          <Dashboard metrics={metrics} upcomingWeddings={upcomingWeddings} openJobs={openJobs} openJobsGrafik={openJobsGrafik} upcomingBookings={upcomingBookings} loading={loading} onNavigate={setView} team={team} onAiAction={applyAiAction} />
         )}
         {view === "hochzeiten" && !weddingUnlocked && (
           <PasswordGate endpoint="/api/check-wedding-password" storageKey="zp-wedding-unlocked" accent={BEREICH_BY_KEY.hochzeiten.accent}
@@ -443,10 +444,15 @@ function NavItem({ active, onClick, icon, label, accent }) {
   );
 }
 
-function Dashboard({ metrics, upcomingWeddings, openJobs, upcomingBookings, loading, onNavigate, team, onAiAction }) {
+function Dashboard({ metrics, upcomingWeddings, openJobs, openJobsGrafik, upcomingBookings, loading, onNavigate, team, onAiAction }) {
   const d = new Date();
   const weekday = d.toLocaleDateString("de-DE", { weekday: "long" });
   const dateStr = d.toLocaleDateString("de-DE", { day: "2-digit", month: "long", year: "numeric" });
+  // Wichtigste Grafik-Projekte: höchste Priorität zuerst, bei Gleichstand das
+  // nähere Datum (Abgabe vor Shooting-Datum, da bei Grafik-Jobs meist relevanter).
+  const topGrafikJobs = [...openJobsGrafik]
+    .sort((a, b) => (PRIO_ORDER[a.prio] ?? 1) - (PRIO_ORDER[b.prio] ?? 1) || (a.abgabe || a.date || "9999").localeCompare(b.abgabe || b.date || "9999"))
+    .slice(0, 4);
   return (
     <div>
       <ChatPanel context={{ team }} onAction={onAiAction} />
@@ -470,11 +476,17 @@ function Dashboard({ metrics, upcomingWeddings, openJobs, upcomingBookings, load
             <PreviewRow key={j.id} title={j.name} sub={j.status} right={j.date ? fmtDate(j.date) : ""} />
           ))}
         </ListPreview>
+        <ListPreview title="Wichtigste Grafik-Projekte" empty="Keine offenen Grafik-Projekte." accent={BEREICH_BY_KEY.grafik.accent}>
+          {topGrafikJobs.map(j => (
+            <PreviewRow key={j.id} title={j.name} sub={`${j.prio} · ${j.status}`} right={j.abgabe ? "AB " + fmtDate(j.abgabe) : (j.date ? fmtDate(j.date) : "")} />
+          ))}
+        </ListPreview>
         <ListPreview title="Nächste Fotobox-Buchungen" empty="Keine anstehenden Buchungen." accent={BEREICH_BY_KEY.fotobox.accent}>
           {upcomingBookings.slice(0, 4).map(b => (
             <PreviewRow key={b.id} title={b.title} sub={b.location || ""} right={fmtDate(b.start_date)} />
           ))}
         </ListPreview>
+        <ListPreview title="Nächste Messen" empty="Noch keine Messen hinterlegt – der Bereich wird mit Philipp im Detail geplant." accent={BEREICH_BY_KEY.messebau.accent} />
         <ListPreview title="Nächste Hochzeiten" empty="Keine anstehenden Hochzeiten." accent={BEREICH_BY_KEY.hochzeiten.accent}>
           {upcomingWeddings.slice(0, 4).map(h => (
             <PreviewRow key={h.id} title={`${h.data.partner1 || "?"} & ${h.data.partner2 || "?"}`} sub={h.data.feierAdresse || ""} right={fmtDate(h.data.hochzeitsDatum)} />
