@@ -1,5 +1,6 @@
 import { supabaseAdmin } from "./_lib/supabaseAdmin.js";
 import { mocoCreateProjectForJob } from "./_lib/moco.js";
+import { notifyTeamsBooking } from "./_lib/teamsNotify.js";
 
 // KI-Erfassung für die "Neuer Job"-Maske (Foto-/Videoproduktion): erkennt aus
 // Freitext, Diktat (Spracherkennung läuft clientseitig) und/oder einem
@@ -146,6 +147,7 @@ Antworte NUR mit dem JSON-Array, ohne Erklärung, ohne Markdown-Backticks.${effe
   // Moco-Projekt beim passenden Kunden anlegen, damit das Team sofort Zeiten
   // buchen kann - best effort, lässt die Jobanlage nie fehlschlagen.
   await Promise.all(inserted.map(job => mocoCreateProjectForJob(job).catch(e => console.error("Moco-Projekt (KI-Erfassung):", e.message))));
+  await Promise.all(inserted.map(job => notifyTeamsBooking({ names: job.personen, jobName: job.name, bereich: "Foto/Video" })));
 
   return res.status(200).json({ count: inserted.length, jobs: inserted });
 }

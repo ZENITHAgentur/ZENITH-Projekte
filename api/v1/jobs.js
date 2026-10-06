@@ -1,6 +1,7 @@
 import { supabaseAdmin } from "../_lib/supabaseAdmin.js";
 import { requireApiKey } from "../_lib/auth.js";
 import { mocoCreateProjectForJob } from "../_lib/moco.js";
+import { notifyTeamsBooking } from "../_lib/teamsNotify.js";
 
 // Externe Integrations-API für Foto-/Video-Jobs (Bereich "Produktion") und
 // Grafik-Jobs (Bereich "Grafik") - gedacht für die Anbindung des separaten
@@ -36,6 +37,7 @@ export default async function handler(req, res) {
     const { data, error } = await sb.from("js_jobs").insert([row]).select().single();
     if (error) return res.status(500).json({ error: error.message });
     if (data.bereich !== "Grafik") mocoCreateProjectForJob(data).catch(e => console.error("Moco-Projekt (externe API):", e.message));
+    notifyTeamsBooking({ names: data.personen, jobName: data.name, bereich: data.bereich === "Grafik" ? "Grafik" : "Foto/Video" });
     return res.status(201).json({ job: data });
   }
 

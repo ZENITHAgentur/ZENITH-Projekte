@@ -1,5 +1,6 @@
 import { supabaseAdmin } from "./_lib/supabaseAdmin.js";
 import { mocoCreateProjectForJob } from "./_lib/moco.js";
+import { notifyTeamsBooking } from "./_lib/teamsNotify.js";
 
 // Claude-gestützter Assistent für den Chat-Bereich auf der Übersichtsseite
 // und in der Job-Detailansicht. Kann Jobs/Buchungen/Hochzeiten per
@@ -81,6 +82,7 @@ async function executeTool(sb, name, input, context) {
     const { data, error } = await sb.from("js_jobs").insert([row]).select().single();
     if (error) throw new Error(error.message);
     mocoCreateProjectForJob(data).catch(e => console.error("Moco-Projekt (KI-Chat):", e.message));
+    notifyTeamsBooking({ names: data.personen, jobName: data.name, bereich: "Foto/Video" });
     return data;
   }
   if (name === "update_job") {

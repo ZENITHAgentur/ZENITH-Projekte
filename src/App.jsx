@@ -157,6 +157,22 @@ export default function App() {
     }
   };
 
+  // Postet in einen Teams-Kanal, sobald Personen einem Job zugeordnet werden
+  // (Neuanlage, oder im Edit neu hinzugekommene Personen - bereits vorher
+  // zugewiesene sollen nicht bei jeder Bearbeitung erneut benachrichtigt werden).
+  const notifyTeamsBooking = async (names, job) => {
+    if (!names || names.length === 0) return;
+    try {
+      const res = await fetch("/api/teams-notify", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ names, jobName: job.name, bereich: "Foto/Video" }),
+      });
+      if (!res.ok) { const r = await res.json(); throw new Error(r.error || "Teams-Fehler"); }
+    } catch (e) {
+      showToast("Teams-Benachrichtigung fehlgeschlagen: " + e.message, false);
+    }
+  };
+
   useEffect(() => {
     if (!appUnlocked) return;
     let cancelled = false;
@@ -220,16 +236,21 @@ export default function App() {
       projekttyp: values.projekttyp || "Fotografie", kategorien: values.kategorien || [], attachments: values.attachments || [],
     };
     if (existingId) {
-      const vorherigerStatus = data.fotostudioJobs.find(j => j.id === existingId)?.status;
+      const vorher = data.fotostudioJobs.find(j => j.id === existingId);
+      const vorherigerStatus = vorher?.status;
+      const vorherigePersonen = Array.isArray(vorher?.personen) ? vorher.personen : [];
       const { data: updated, error } = await supabase.from("js_jobs").update(row).eq("id", existingId).select(JOB_FIELDS).single();
       if (error) throw error;
       setData(p => ({ ...p, fotostudioJobs: p.fotostudioJobs.map(j => j.id === existingId ? updated : j) }));
       if (updated.status === "Archiviert" && vorherigerStatus !== "Archiviert") notifyMocoArchive(updated);
+      const neuePersonen = (updated.personen || []).filter(p => !vorherigePersonen.includes(p));
+      notifyTeamsBooking(neuePersonen, updated);
     } else {
       const { data: inserted, error } = await supabase.from("js_jobs").insert([row]).select(JOB_FIELDS).single();
       if (error) throw error;
       setData(p => ({ ...p, fotostudioJobs: [inserted, ...p.fotostudioJobs] }));
       notifyMocoCreateProject(inserted);
+      notifyTeamsBooking(inserted.personen || [], inserted);
     }
   };
 
