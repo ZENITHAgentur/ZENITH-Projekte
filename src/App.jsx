@@ -56,8 +56,8 @@ const GRAFIK_STATUS_CFG = {
 };
 const GRAFIK_AUFTRAGSART_LIST = ["Bildbearbeitung", "Anzeige", "Nachbestellung", "Katalog", "Sonstiges"];
 const EMPTY_GRAFIK_JOB_FORM = {
-  name: "", status: "Neu", auftragsart: "Bildbearbeitung", speicherort: "", anzahl_fotos: "", anzahl_videos: "",
-  personen: [], date: "", abgabe: "", stunden_budget: "", kontakt: "", notizen: "", attachments: [],
+  kunde: "", jobname: "", status: "Neu", auftragsart: "Bildbearbeitung", speicherort: "", anzahl_fotos: "", anzahl_videos: "",
+  prio: "Mittel", aufwand: "Mittel", personen: [], date: "", abgabe: "", stunden_budget: "", kontakt: "", notizen: "", attachments: [],
 };
 const PRIO_LIST = ["Hoch", "Mittel", "Niedrig"];
 const PRIO_ORDER = { "Hoch": 0, "Mittel": 1, "Niedrig": 2 };
@@ -77,7 +77,7 @@ const PROJEKTTYP_CFG = {
   "Video": { icon: "ti-movie", kategorien: ["Imagefilm", "Produktvideo", "Social Media Clip", "Reels / TikTok", "Interview", "Sonstiges"] },
 };
 const EMPTY_JOB_FORM = {
-  name: "", status: "Neu", prio: "Mittel", aufwand: "Mittel", ort: "Im Haus",
+  kunde: "", jobname: "", status: "Neu", prio: "Mittel", aufwand: "Mittel", ort: "Im Haus",
   personen: [], date: "", date_end: "", dauer: "", abgabe: "", kontakt: "", notizen: "",
   projekttyp: "Fotografie", kategorien: [], attachments: [], stationen: [], equipment: [],
 };
@@ -109,6 +109,19 @@ function fmtDate(iso) {
   const d = new Date(iso + "T00:00:00");
   if (isNaN(d)) return iso;
   return d.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" });
+}
+// Einheitliches Namensschema im ganzen Dashboard: "Kunde | Jobname" - Kunde
+// zuerst, damit Jobs in Listen/Suche sofort nach Kunde erkennbar sind.
+function joinName(kunde, jobname) {
+  const k = (kunde || "").trim(), j = (jobname || "").trim();
+  if (k && j) return `${k} | ${j}`;
+  return j || k;
+}
+function splitName(name) {
+  const s = (name || "");
+  const idx = s.indexOf(" | ");
+  if (idx === -1) return { kunde: "", jobname: s };
+  return { kunde: s.slice(0, idx), jobname: s.slice(idx + 3) };
 }
 function today() {
   return new Date().toISOString().split("T")[0];
@@ -234,8 +247,16 @@ export default function App() {
   const [fotoView, setFotoView] = useState(() => { try { return localStorage.getItem("zp-foto-view") || "liste"; } catch { return "liste"; } });
   const [groupBy, setGroupBy] = useState(() => { try { return localStorage.getItem("zp-foto-groupby") || "prio"; } catch { return "prio"; } });
   const [sortMode, setSortMode] = useState(false);
+  const [grafikView, setGrafikView] = useState(() => { try { return localStorage.getItem("zp-grafik-view") || "liste"; } catch { return "liste"; } });
+  const [grafikGroupBy, setGrafikGroupBy] = useState(() => { try { return localStorage.getItem("zp-grafik-groupby") || "prio"; } catch { return "prio"; } });
+  // Da sich Mitarbeiter keinen eigenen Zugang einloggen, kann sich jeder per
+  // Klick auf seinen Namen die eigenen Jobs herausfiltern ("Meine Jobs").
+  const [fotoPersonFilter, setFotoPersonFilter] = useState("Alle");
+  const [grafikPersonFilter, setGrafikPersonFilter] = useState("Alle");
   useEffect(() => { try { localStorage.setItem("zp-foto-view", fotoView); } catch {} }, [fotoView]);
   useEffect(() => { try { localStorage.setItem("zp-foto-groupby", groupBy); } catch {} }, [groupBy]);
+  useEffect(() => { try { localStorage.setItem("zp-grafik-view", grafikView); } catch {} }, [grafikView]);
+  useEffect(() => { try { localStorage.setItem("zp-grafik-groupby", grafikGroupBy); } catch {} }, [grafikGroupBy]);
 
   const JOB_FIELDS = "id,name,status,date,date_end,abgabe,dauer,prio,aufwand,kontakt,notizen,projekttyp,kategorien,personen,ort,bereich,attachments,stationen,sort_order,equipment,speicherort,auftragsart,anzahl_fotos,anzahl_videos,stunden_budget";
   const [toast, setToast] = useState(null);
@@ -352,13 +373,14 @@ export default function App() {
     const haystack = [job.name, job.kontakt, job.notizen, ...(job.personen || [])].join(" ").toLowerCase();
     return haystack.includes(term.trim().toLowerCase());
   };
-  const visibleFotoJobs = openJobs.filter(j => matchesSearch(j, fotoSearch)).slice().sort((a, b) => {
+  const matchesPerson = (job, person) => person === "Alle" || (Array.isArray(job.personen) && job.personen.includes(person));
+  const visibleFotoJobs = openJobs.filter(j => matchesSearch(j, fotoSearch) && matchesPerson(j, fotoPersonFilter)).slice().sort((a, b) => {
     if (a.sort_order == null && b.sort_order == null) return 0;
     if (a.sort_order == null) return 1;
     if (b.sort_order == null) return -1;
     return a.sort_order - b.sort_order;
   });
-  const visibleGrafikJobs = openJobsGrafik.filter(j => matchesSearch(j, grafikSearch));
+  const visibleGrafikJobs = openJobsGrafik.filter(j => matchesSearch(j, grafikSearch) && matchesPerson(j, grafikPersonFilter));
   const todaysFotoJobs = openJobsAll.filter(j => j.bereich !== "Grafik" && jobActiveOn(j, t));
   const upcomingBookings = data.bookings
     .filter(b => b.start_date >= t && b.status !== "storniert")
@@ -396,7 +418,7 @@ export default function App() {
   // inkl. der vollen Fachlogik-Felder (Status, Projekttyp/Kategorien, Personen, Ort, Zeitraum).
   const handleSaveJob = async (values, existingId) => {
     const row = {
-      name: values.name, status: values.status || "Neu", prio: values.prio || "Mittel", aufwand: values.aufwand || "Mittel",
+      name: joinName(values.kunde, values.jobname), status: values.status || "Neu", prio: values.prio || "Mittel", aufwand: values.aufwand || "Mittel",
       ort: values.ort || "Im Haus", personen: values.personen || [], person: (values.personen || []).join(", "),
       date: values.date || null, date_end: values.date_end || null, dauer: values.dauer || null,
       abgabe: values.abgabe || null, kontakt: values.kontakt || "", notizen: values.notizen || "",
@@ -438,11 +460,12 @@ export default function App() {
   // Foto/Video, auf Grafik-Mitarbeiter/Mediengestalter zugeschnitten.
   const handleSaveGrafikJob = async (values, existingId) => {
     const row = {
-      name: values.name, status: values.status || "Neu", bereich: "Grafik",
+      name: joinName(values.kunde, values.jobname), status: values.status || "Neu", bereich: "Grafik",
       auftragsart: values.auftragsart || "Bildbearbeitung", speicherort: values.speicherort || null,
       anzahl_fotos: values.anzahl_fotos === "" ? null : Number(values.anzahl_fotos),
       anzahl_videos: values.anzahl_videos === "" ? null : Number(values.anzahl_videos),
       stunden_budget: values.stunden_budget === "" ? null : Number(values.stunden_budget),
+      prio: values.prio || "Mittel", aufwand: values.aufwand || "Mittel",
       personen: values.personen || [], person: (values.personen || []).join(", "),
       date: values.date || null, abgabe: values.abgabe || null,
       kontakt: values.kontakt || "", notizen: values.notizen || "", attachments: values.attachments || [],
@@ -586,6 +609,7 @@ export default function App() {
             <StudioOccupancyWidget jobs={openJobs} onOpen={j => setJobModal({ mode: "edit", job: j })} />
           </div>
           {fotoView !== "equipment" && <SearchBox value={fotoSearch} onChange={setFotoSearch} placeholder="Suche nach Name, Kontakt, Notiz, Person…" />}
+          {fotoView !== "equipment" && <PersonFilterChips team={team} value={fotoPersonFilter} onChange={setFotoPersonFilter} accent={BEREICH_BY_KEY.fotostudio.accent} />}
 
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
             <div style={{ display: "flex", background: Z.panelAlt, borderRadius: 8, overflow: "hidden" }}>
@@ -644,11 +668,38 @@ export default function App() {
         </BereichPage>}
         {view === "grafik" && <BereichPage bereich={BEREICH_BY_KEY.grafik} loading={loading} onAdd={() => setGrafikJobModal({ mode: "new" })}>
           <SearchBox value={grafikSearch} onChange={setGrafikSearch} placeholder="Suche nach Name, Kontakt, Notiz, Person…" />
-          <ListPreview title="Offene Grafik-Jobs" empty={grafikSearch ? "Keine Treffer für diese Suche." : "Keine offenen Jobs."} accent={BEREICH_BY_KEY.grafik.accent}>
-            {visibleGrafikJobs.map(j => (
-              <GrafikJobRow key={j.id} job={j} onOpen={() => setGrafikJobModal({ mode: "edit", job: j })} onAdvance={() => handleGrafikStatusAdvance(j)} />
-            ))}
-          </ListPreview>
+          <PersonFilterChips team={team} value={grafikPersonFilter} onChange={setGrafikPersonFilter} accent={BEREICH_BY_KEY.grafik.accent} />
+
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", background: Z.panelAlt, borderRadius: 8, overflow: "hidden" }}>
+              {[["liste", "ti-list", "Liste"], ["board", "ti-layout-kanban", "Board"]].map(([key, icon, label]) => (
+                <div key={key} onClick={() => setGrafikView(key)}
+                  style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 13px", cursor: "pointer", fontSize: 12.5, fontWeight: 700, background: grafikView === key ? Z.gold : "transparent", color: grafikView === key ? "#1A1A1A" : Z.textSoft }}>
+                  <i className={`ti ${icon}`} style={{ fontSize: 14 }}></i>{label}
+                </div>
+              ))}
+            </div>
+            {grafikView === "board" && (
+              <div style={{ display: "flex", background: Z.panelAlt, borderRadius: 8, overflow: "hidden" }}>
+                {[["prio", "Priorität"], ["aufwand", "Aufwand"]].map(([key, label]) => (
+                  <div key={key} onClick={() => setGrafikGroupBy(key)}
+                    style={{ padding: "7px 13px", cursor: "pointer", fontSize: 12.5, fontWeight: 700, background: grafikGroupBy === key ? Z.gold : "transparent", color: grafikGroupBy === key ? "#1A1A1A" : Z.textSoft }}>
+                    {label}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {grafikView === "board" ? (
+            <BoardView jobs={visibleGrafikJobs} groupBy={grafikGroupBy} onOpen={j => setGrafikJobModal({ mode: "edit", job: j })} onChangeGroup={(id, val) => handleChangeGroupValue(id, grafikGroupBy, val)} />
+          ) : (
+            <ListPreview title="Offene Grafik-Jobs" empty={grafikSearch ? "Keine Treffer für diese Suche." : "Keine offenen Jobs."} accent={BEREICH_BY_KEY.grafik.accent}>
+              {visibleGrafikJobs.map(j => (
+                <GrafikJobRow key={j.id} job={j} onOpen={() => setGrafikJobModal({ mode: "edit", job: j })} onAdvance={() => handleGrafikStatusAdvance(j)} />
+              ))}
+            </ListPreview>
+          )}
         </BereichPage>}
         {view === "messebau" && <BereichPage bereich={BEREICH_BY_KEY.messebau} loading={false} onAdd={() => setQuickAddTarget("messebau")}>
           <EmptyNotice accent={BEREICH_BY_KEY.messebau.accent} title="Noch in Abstimmung"
@@ -700,7 +751,7 @@ export default function App() {
       )}
 
       {grafikJobModal && (
-        <GrafikJobFormModal mode={grafikJobModal.mode} job={grafikJobModal.job} team={team}
+        <GrafikJobFormModal mode={grafikJobModal.mode} job={grafikJobModal.job} team={team} onChatJobsCreated={handleChatJobsCreated}
           onClose={() => setGrafikJobModal(null)}
           onSubmit={async (values) => { await handleSaveGrafikJob(values, grafikJobModal.job?.id); setGrafikJobModal(null); }} />
       )}
@@ -910,6 +961,23 @@ function SearchBox({ value, onChange, placeholder }) {
       {value && (
         <i className="ti ti-x" onClick={() => onChange("")} style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", fontSize: 14, color: Z.textSoft, cursor: "pointer" }}></i>
       )}
+    </div>
+  );
+}
+
+// ─── "Meine Jobs"-Filter: da sich Mitarbeiter keinen eigenen Zugang einloggen,
+// kann sich jeder per Klick auf seinen Namen die eigenen Jobs herausfiltern. ──
+function PersonFilterChips({ team, value, onChange, accent }) {
+  if (!team.length) return null;
+  return (
+    <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginBottom: 14 }}>
+      {["Alle", ...team].map(p => (
+        <div key={p} onClick={() => onChange(p)} style={{
+          padding: "5px 12px", borderRadius: 14, fontSize: 12, fontWeight: 700, cursor: "pointer",
+          border: `1.5px solid ${value === p ? accent : Z.border}`, background: value === p ? accent : "transparent",
+          color: value === p ? "#0C0C0D" : Z.textSoft,
+        }}>{p}</div>
+      ))}
     </div>
   );
 }
@@ -1451,6 +1519,8 @@ function GrafikJobRow({ job, onOpen, onAdvance }) {
         style={{ flexShrink: 0, padding: "3px 9px", borderRadius: 20, fontSize: 10.5, fontWeight: 700, color: statusColor, border: `1.5px solid ${statusColor}`, cursor: "pointer", whiteSpace: "nowrap" }}>
         {job.status}
       </div>
+      <div title={`Priorität: ${job.prio || "Mittel"}`} style={{ flexShrink: 0 }}><PrioAmpelMini value={job.prio || "Mittel"} /></div>
+      <div title={`Aufwand: ${job.aufwand || "Mittel"}`} style={{ flexShrink: 0 }}><AufwandBarsMini value={job.aufwand || "Mittel"} /></div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 13.5, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", display: "flex", alignItems: "center", gap: 6 }}>
           {job.name}
@@ -1776,7 +1846,7 @@ function ChipSelect({ options, selected, onToggle, accent = Z.gold }) {
 // Freitext, Diktat (Web Speech API) und/oder ein angehängtes Foto/PDF/Excel
 // gehen an api/parse-input.js (Claude), das daraus einen oder mehrere Jobs
 // direkt anlegt. Übernommen aus der alten Fotostudio-Jobliste (ChatCapture).
-function ChatCapture({ team, onCreated }) {
+function ChatCapture({ team, onCreated, bereich = "fotostudio" }) {
   const [text, setText] = useState("");
   const [file, setFile] = useState(null);
   const [listening, setListening] = useState(false);
@@ -1841,7 +1911,7 @@ function ChatCapture({ team, onCreated }) {
       }
       const res = await fetch("/api/parse-input", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: trimmed, fileBase64, mediaType, fileName: file?.name, team }),
+        body: JSON.stringify({ text: trimmed, fileBase64, mediaType, fileName: file?.name, team, bereich }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Erkennung fehlgeschlagen");
@@ -1902,7 +1972,7 @@ function ChatCapture({ team, onCreated }) {
 // Projekttyp/Kategorien, Personen-Zuordnung, Shooting-Zeitraum, Ort.
 function JobFormModal({ mode, job, team, onAiAction, onChatJobsCreated, onClose, onSubmit }) {
   const [v, setV] = useState(() => mode === "edit" && job ? {
-    name: job.name || "", status: job.status || "Neu", prio: job.prio || "Mittel", aufwand: job.aufwand || "Mittel",
+    ...splitName(job.name), status: job.status || "Neu", prio: job.prio || "Mittel", aufwand: job.aufwand || "Mittel",
     ort: job.ort || "Im Haus", personen: Array.isArray(job.personen) ? job.personen : [],
     date: job.date || "", date_end: job.date_end || "", dauer: job.dauer || "", abgabe: job.abgabe || "",
     kontakt: job.kontakt || "", notizen: job.notizen || "", projekttyp: job.projekttyp || "Fotografie",
@@ -1935,11 +2005,11 @@ function JobFormModal({ mode, job, team, onAiAction, onChatJobsCreated, onClose,
     }
   };
 
-  // Moco-Firmen-Autocomplete beim Tippen des Jobnamens (api/moco-search.js).
+  // Moco-Firmen-Autocomplete beim Tippen des Kundennamens (api/moco-search.js).
   const [mocoSuggestions, setMocoSuggestions] = useState([]);
   const mocoDebounce = useRef(null);
-  const handleNameChange = (val) => {
-    set("name", val);
+  const handleKundeChange = (val) => {
+    set("kunde", val);
     clearTimeout(mocoDebounce.current);
     if (val.trim().length < 2) { setMocoSuggestions([]); return; }
     mocoDebounce.current = setTimeout(async () => {
@@ -1974,7 +2044,7 @@ function JobFormModal({ mode, job, team, onAiAction, onChatJobsCreated, onClose,
   };
 
   const handleSubmit = async () => {
-    if (!v.name.trim()) { setError("Jobname / Kunde fehlt"); return; }
+    if (!v.kunde.trim() && !v.jobname.trim()) { setError("Kunde oder Jobname fehlt"); return; }
     setBusy(true); setError("");
     try {
       await onSubmit(v);
@@ -2027,18 +2097,23 @@ function JobFormModal({ mode, job, team, onAiAction, onChatJobsCreated, onClose,
           )}
 
           <div style={{ position: "relative" }}>
-            <FieldLabel>Jobname / Kunde *</FieldLabel>
-            <input type="text" value={v.name} onChange={e => handleNameChange(e.target.value)}
+            <FieldLabel>Kunde</FieldLabel>
+            <input type="text" value={v.kunde} onChange={e => handleKundeChange(e.target.value)}
               onBlur={() => setTimeout(() => setMocoSuggestions([]), 150)} style={inputStyle} autoFocus />
             {mocoSuggestions.length > 0 && (
               <div style={{ position: "absolute", top: "100%", left: 0, right: 0, marginTop: 4, background: Z.panelAlt, border: `1px solid ${Z.border}`, borderRadius: 9, overflow: "hidden", zIndex: 5, boxShadow: "0 8px 20px rgba(0,0,0,0.4)" }}>
                 <div style={{ padding: "6px 11px", fontSize: 10, fontWeight: 700, color: Z.textFaint, textTransform: "uppercase", letterSpacing: "0.05em" }}>Aus dem Moco-Firmenstamm</div>
                 {mocoSuggestions.map(c => (
-                  <div key={c.id} onMouseDown={() => { set("name", c.name); setMocoSuggestions([]); }}
+                  <div key={c.id} onMouseDown={() => { set("kunde", c.name); setMocoSuggestions([]); }}
                     style={{ padding: "8px 11px", fontSize: 13.5, cursor: "pointer", borderTop: `1px solid ${Z.borderSoft}` }}>{c.name}</div>
                 ))}
               </div>
             )}
+          </div>
+
+          <div>
+            <FieldLabel>Jobname</FieldLabel>
+            <input type="text" value={v.jobname} onChange={e => set("jobname", e.target.value)} placeholder="z.B. Freisteller Herbstkollektion" style={inputStyle} />
           </div>
 
           <Row>
@@ -2185,10 +2260,11 @@ function JobFormModal({ mode, job, team, onAiAction, onChatJobsCreated, onClose,
 // tun, wie viele Fotos/Videos sind betroffen, wann startet/endet es, wer
 // arbeitet dran und wie viele Stunden sind budgetiert (angelehnt an gängige
 // Agentur-Tools wie awork: Auftragsart, Zeitbudget, Zuständigkeit, Deadline).
-function GrafikJobFormModal({ mode, job, team, onClose, onSubmit }) {
+function GrafikJobFormModal({ mode, job, team, onChatJobsCreated, onClose, onSubmit }) {
   const [v, setV] = useState(mode === "edit" && job ? {
-    name: job.name || "", status: job.status || "Neu", auftragsart: job.auftragsart || "Bildbearbeitung",
+    ...splitName(job.name), status: job.status || "Neu", auftragsart: job.auftragsart || "Bildbearbeitung",
     speicherort: job.speicherort || "", anzahl_fotos: job.anzahl_fotos ?? "", anzahl_videos: job.anzahl_videos ?? "",
+    prio: job.prio || "Mittel", aufwand: job.aufwand || "Mittel",
     personen: Array.isArray(job.personen) ? job.personen : [], date: job.date || "", abgabe: job.abgabe || "",
     stunden_budget: job.stunden_budget ?? "", kontakt: job.kontakt || "", notizen: job.notizen || "",
     attachments: Array.isArray(job.attachments) ? job.attachments : [],
@@ -2200,8 +2276,8 @@ function GrafikJobFormModal({ mode, job, team, onClose, onSubmit }) {
 
   const [mocoSuggestions, setMocoSuggestions] = useState([]);
   const mocoDebounce = useRef(null);
-  const handleNameChange = (val) => {
-    set("name", val);
+  const handleKundeChange = (val) => {
+    set("kunde", val);
     clearTimeout(mocoDebounce.current);
     if (val.trim().length < 2) { setMocoSuggestions([]); return; }
     mocoDebounce.current = setTimeout(async () => {
@@ -2235,7 +2311,7 @@ function GrafikJobFormModal({ mode, job, team, onClose, onSubmit }) {
   };
 
   const handleSubmit = async () => {
-    if (!v.name.trim()) { setError("Jobname / Kunde fehlt"); return; }
+    if (!v.kunde.trim() && !v.jobname.trim()) { setError("Kunde oder Jobname fehlt"); return; }
     setBusy(true); setError("");
     try {
       await onSubmit(v);
@@ -2258,6 +2334,16 @@ function GrafikJobFormModal({ mode, job, team, onClose, onSubmit }) {
           <i className="ti ti-x" onClick={onClose} style={{ fontSize: 18, color: Z.textSoft, cursor: "pointer" }}></i>
         </div>
         <div style={{ padding: "16px 18px", display: "flex", flexDirection: "column", gap: 14, overflowY: "auto" }}>
+          {mode === "new" && (
+            <>
+              <ChatCapture team={team} bereich="grafik" onCreated={jobs => { onChatJobsCreated && onChatJobsCreated(jobs); onClose(); }} />
+              <div style={{ display: "flex", alignItems: "center", gap: 10, color: Z.textFaint, fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                <div style={{ flex: 1, height: 1, background: Z.border }} />
+                oder manuell
+                <div style={{ flex: 1, height: 1, background: Z.border }} />
+              </div>
+            </>
+          )}
           {mode === "edit" && (
             <div>
               <FieldLabel>Status</FieldLabel>
@@ -2274,18 +2360,23 @@ function GrafikJobFormModal({ mode, job, team, onClose, onSubmit }) {
           )}
 
           <div style={{ position: "relative" }}>
-            <FieldLabel>Jobname / Kunde *</FieldLabel>
-            <input type="text" value={v.name} onChange={e => handleNameChange(e.target.value)}
+            <FieldLabel>Kunde</FieldLabel>
+            <input type="text" value={v.kunde} onChange={e => handleKundeChange(e.target.value)}
               onBlur={() => setTimeout(() => setMocoSuggestions([]), 150)} style={inputStyle} autoFocus />
             {mocoSuggestions.length > 0 && (
               <div style={{ position: "absolute", top: "100%", left: 0, right: 0, marginTop: 4, background: Z.panelAlt, border: `1px solid ${Z.border}`, borderRadius: 9, overflow: "hidden", zIndex: 5, boxShadow: "0 8px 20px rgba(0,0,0,0.4)" }}>
                 <div style={{ padding: "6px 11px", fontSize: 10, fontWeight: 700, color: Z.textFaint, textTransform: "uppercase", letterSpacing: "0.05em" }}>Aus dem Moco-Firmenstamm</div>
                 {mocoSuggestions.map(c => (
-                  <div key={c.id} onMouseDown={() => { set("name", c.name); setMocoSuggestions([]); }}
+                  <div key={c.id} onMouseDown={() => { set("kunde", c.name); setMocoSuggestions([]); }}
                     style={{ padding: "8px 11px", fontSize: 13.5, cursor: "pointer", borderTop: `1px solid ${Z.borderSoft}` }}>{c.name}</div>
                 ))}
               </div>
             )}
+          </div>
+
+          <div>
+            <FieldLabel>Jobname</FieldLabel>
+            <input type="text" value={v.jobname} onChange={e => set("jobname", e.target.value)} placeholder="z.B. Handzettel KW45" style={inputStyle} />
           </div>
 
           <div>
@@ -2310,6 +2401,15 @@ function GrafikJobFormModal({ mode, job, team, onClose, onSubmit }) {
               <input type="number" min="0" value={v.anzahl_videos} onChange={e => set("anzahl_videos", e.target.value)} style={inputStyle} />
             </Col>
           </Row>
+
+          <div>
+            <FieldLabel>Priorität</FieldLabel>
+            <PrioAmpelPicker value={v.prio} onChange={p => set("prio", p)} />
+          </div>
+          <div>
+            <FieldLabel>Aufwand</FieldLabel>
+            <AufwandBarsPicker value={v.aufwand} onChange={a => set("aufwand", a)} />
+          </div>
 
           <div>
             <FieldLabel>Personen</FieldLabel>

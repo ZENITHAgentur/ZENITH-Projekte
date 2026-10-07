@@ -20,7 +20,8 @@ export default async function handler(req, res) {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return res.status(500).json({ error: "ANTHROPIC_API_KEY fehlt." });
 
-  const { text, fileBase64, mediaType, fileName, team } = req.body || {};
+  const { text, fileBase64, mediaType, fileName, team, bereich } = req.body || {};
+  const isGrafik = bereich === "grafik";
   const trimmedText = (text || "").trim();
   if (!trimmedText && !fileBase64) return res.status(400).json({ error: "Kein Text und keine Datei übermittelt" });
 
@@ -65,12 +66,42 @@ export default async function handler(req, res) {
 
   const teamText = Array.isArray(team) && team.length ? `Bekanntes Team: ${team.join(", ")}.` : "";
 
-  const promptText = `Analysiere die folgende Eingabe für ein Fotostudio: ${inputDescription}.
+  const promptText = isGrafik ? `Analysiere die folgende Eingabe für die Grafik-/Nachbearbeitungs-Abteilung eines Fotostudios: ${inputDescription}.
+Erkenne alle darin enthaltenen Grafik-/Bildbearbeitungs-Aufträge und gib sie als JSON-Array zurück. ${teamText}
+
+Für jeden Job folgendes Format:
+{
+  "kunde": "Name des Kunden/der Firma, falls erkennbar, sonst leerer String",
+  "jobname": "Kurze Auftragsbeschreibung (z.B. 'Handzettel KW45 Wurst & Käse')",
+  "auftragsart": "Bildbearbeitung" oder "Anzeige" oder "Nachbestellung" oder "Katalog" oder "Sonstiges",
+  "speicherort": "Pfad/Hinweis, wo die zu bearbeitenden Daten liegen, falls erkennbar, sonst leerer String",
+  "anzahl_fotos": Zahl oder null,
+  "anzahl_videos": Zahl oder null,
+  "stunden_budget": Zahl (Stunden) oder null, falls ein Zeitbudget erkennbar ist,
+  "prio": "Hoch" oder "Mittel" oder "Niedrig",
+  "aufwand": "Klein" oder "Mittel" oder "Groß",
+  "personen": Array von Namen aus dem bekannten Team, falls erkennbar, sonst leeres Array,
+  "date": "YYYY-MM-DD" oder null (gewünschter Start der Bearbeitung, falls erkennbar),
+  "abgabe": "YYYY-MM-DD" oder null (Deadline/Liefertermin, falls erkennbar),
+  "kontakt": "E-Mail oder Telefonnummer des Kunden, falls erkennbar, sonst leerer String",
+  "notizen": "Was genau bearbeitet werden muss: Details, Mengen, Besonderheiten"
+}
+
+Regeln:
+- Enthält die Eingabe mehrere unterschiedliche Aufträge, erstelle mehrere Einträge im Array.
+- Erkenne auch relative Datumsangaben (z.B. "nächsten Montag", "in zwei Wochen") und rechne sie in ein konkretes Datum um. Heutiges Datum: ${today}.
+- Ist kein konkretes Datum erkennbar, setze date bzw. abgabe auf null.
+- prio "Hoch" bei erkennbarer Dringlichkeit oder kurzfristigen Terminen, sonst "Mittel".
+- Ist kein Grafik-/Bildbearbeitungs-Auftrag erkennbar, antworte mit einem leeren Array [].
+
+Antworte NUR mit dem JSON-Array, ohne Erklärung, ohne Markdown-Backticks.${effectiveText ? `\n\nZusätzlicher Text:\n"""\n${effectiveText}\n"""` : ""}`
+    : `Analysiere die folgende Eingabe für ein Fotostudio: ${inputDescription}.
 Erkenne alle darin enthaltenen Foto-/Video-Produktionsjobs und gib sie als JSON-Array zurück. ${teamText}
 
 Für jeden Job folgendes Format:
 {
-  "name": "Kundenname – Auftragsbeschreibung",
+  "kunde": "Name des Kunden/der Firma, falls erkennbar, sonst leerer String",
+  "jobname": "Kurze Auftragsbeschreibung",
   "projekttyp": "Fotografie" oder "Video",
   "kategorien": Array aus: ["Freistellerfotos","Milieufotos","Porträtfotos","Produktfotos","Reportage","Sonstiges","Imagefilm","Produktvideo","Social Media Clip","Reels / TikTok","Interview"],
   "prio": "Hoch" oder "Mittel" oder "Niedrig",
@@ -131,13 +162,29 @@ Antworte NUR mit dem JSON-Array, ohne Erklärung, ohne Markdown-Backticks.${effe
 
   if (jobs.length === 0) return res.status(200).json({ count: 0, jobs: [] });
 
-  const rows = jobs.map(j => ({
-    name: j.name || "Unbekannt", status: "Neu", prio: j.prio || "Mittel", aufwand: j.aufwand || "Mittel",
-    ort: j.ort === "Außer Haus" ? "Außer Haus" : "Im Haus", personen: Array.isArray(j.personen) ? j.personen : [],
-    person: (Array.isArray(j.personen) ? j.personen : []).join(", "), date: j.date || null, abgabe: j.abgabe || null,
-    kontakt: j.kontakt || "", notizen: j.notizen || "", projekttyp: j.projekttyp || "Fotografie",
-    kategorien: Array.isArray(j.kategorien) ? j.kategorien : [], bereich: "Produktion",
-  }));
+  // Einheitliches Namensschema im ganzen Dashboard: "Kunde | Jobname".
+  const joinName = (kunde, jobname) => {
+    const k = (kunde || "").trim(), j = (jobname || "").trim();
+    if (k && j) return `${k} | ${j}`;
+    return j || k || "Unbekannt";
+  };
+
+  const rows = isGrafik
+    ? jobs.map(j => ({
+        name: joinName(j.kunde, j.jobname), status: "Neu", bereich: "Grafik",
+        auftragsart: j.auftragsart || "Bildbearbeitung", speicherort: j.speicherort || null,
+        anzahl_fotos: j.anzahl_fotos ?? null, anzahl_videos: j.anzahl_videos ?? null, stunden_budget: j.stunden_budget ?? null,
+        prio: j.prio || "Mittel", aufwand: j.aufwand || "Mittel",
+        personen: Array.isArray(j.personen) ? j.personen : [], person: (Array.isArray(j.personen) ? j.personen : []).join(", "),
+        date: j.date || null, abgabe: j.abgabe || null, kontakt: j.kontakt || "", notizen: j.notizen || "",
+      }))
+    : jobs.map(j => ({
+        name: joinName(j.kunde, j.jobname), status: "Neu", prio: j.prio || "Mittel", aufwand: j.aufwand || "Mittel",
+        ort: j.ort === "Außer Haus" ? "Außer Haus" : "Im Haus", personen: Array.isArray(j.personen) ? j.personen : [],
+        person: (Array.isArray(j.personen) ? j.personen : []).join(", "), date: j.date || null, abgabe: j.abgabe || null,
+        kontakt: j.kontakt || "", notizen: j.notizen || "", projekttyp: j.projekttyp || "Fotografie",
+        kategorien: Array.isArray(j.kategorien) ? j.kategorien : [], bereich: "Produktion",
+      }));
 
   const sb = supabaseAdmin();
   const { data: inserted, error } = await sb.from("js_jobs").insert(rows).select();
@@ -146,8 +193,10 @@ Antworte NUR mit dem JSON-Array, ohne Erklärung, ohne Markdown-Backticks.${effe
   // Für jeden neu angelegten Job direkt (nicht erst beim Archivieren) ein
   // Moco-Projekt beim passenden Kunden anlegen, damit das Team sofort Zeiten
   // buchen kann - best effort, lässt die Jobanlage nie fehlschlagen.
-  await Promise.all(inserted.map(job => mocoCreateProjectForJob(job).catch(e => console.error("Moco-Projekt (KI-Erfassung):", e.message))));
-  await Promise.all(inserted.map(job => notifyTeamsBooking({ names: job.personen, jobName: job.name, bereich: "Foto/Video" })));
+  if (!isGrafik) {
+    await Promise.all(inserted.map(job => mocoCreateProjectForJob(job).catch(e => console.error("Moco-Projekt (KI-Erfassung):", e.message))));
+    await Promise.all(inserted.map(job => notifyTeamsBooking({ names: job.personen, jobName: job.name, bereich: "Foto/Video" })));
+  }
 
   return res.status(200).json({ count: inserted.length, jobs: inserted });
 }
