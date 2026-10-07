@@ -42,6 +42,23 @@ const STATUS_CFG = {
   "Abgeschlossen": { color: "#9A968C" },
   "Archiviert": { color: "#A66FE0" },
 };
+// ─── Fachlogik Grafik/Nachbearbeitung ──────────────────────────────────────
+// Bewusst schlanker als Foto/Video: speziell für Grafik-Mitarbeiter/
+// Mediengestalter, die wissen müssen, wo die Daten liegen, was genau zu tun
+// ist, wie viele Fotos/Videos betroffen sind, wann es losgeht/fertig sein
+// muss, wer dran arbeitet und wie viele Stunden budgetiert sind.
+const GRAFIK_STATUS_LIST = ["Neu", "In Bearbeitung", "Fertig", "Archiviert"];
+const GRAFIK_STATUS_CFG = {
+  "Neu": { color: "#4ADE80" },
+  "In Bearbeitung": { color: "#4F9CDB" },
+  "Fertig": { color: "#9A968C" },
+  "Archiviert": { color: "#A66FE0" },
+};
+const GRAFIK_AUFTRAGSART_LIST = ["Bildbearbeitung", "Anzeige", "Nachbestellung", "Katalog", "Sonstiges"];
+const EMPTY_GRAFIK_JOB_FORM = {
+  name: "", status: "Neu", auftragsart: "Bildbearbeitung", speicherort: "", anzahl_fotos: "", anzahl_videos: "",
+  personen: [], date: "", abgabe: "", stunden_budget: "", kontakt: "", notizen: "", attachments: [],
+};
 const PRIO_LIST = ["Hoch", "Mittel", "Niedrig"];
 const PRIO_ORDER = { "Hoch": 0, "Mittel": 1, "Niedrig": 2 };
 // Ampel: eindeutige Dringlichkeits-Farben wie eine echte Verkehrsampel.
@@ -188,7 +205,10 @@ const QUICK_ADD = {
     ],
     buildRow: (v) => ({ ...v, status: v.status || "Anfrage" }),
   },
-  grafik: null,
+  // grafik nutzt GrafikJobFormModal (eigenes, schlankes Formular) statt
+  // dieser generischen Schnelleingabe - nur der Titel wird hier für
+  // Button-Label/Sichtbarkeit im Dashboard-FAB genutzt.
+  grafik: { title: "Neuer Grafik-Job" },
   messebau: null,
 };
 
@@ -207,6 +227,7 @@ export default function App() {
   const [quickAddTarget, setQuickAddTarget] = useState(null);
   const [quickEditItem, setQuickEditItem] = useState(null);
   const [jobModal, setJobModal] = useState(null);
+  const [grafikJobModal, setGrafikJobModal] = useState(null);
   const [addPickerOpen, setAddPickerOpen] = useState(false);
   const [fotoSearch, setFotoSearch] = useState("");
   const [grafikSearch, setGrafikSearch] = useState("");
@@ -216,7 +237,7 @@ export default function App() {
   useEffect(() => { try { localStorage.setItem("zp-foto-view", fotoView); } catch {} }, [fotoView]);
   useEffect(() => { try { localStorage.setItem("zp-foto-groupby", groupBy); } catch {} }, [groupBy]);
 
-  const JOB_FIELDS = "id,name,status,date,date_end,abgabe,dauer,prio,aufwand,kontakt,notizen,projekttyp,kategorien,personen,ort,bereich,attachments,stationen,sort_order,equipment";
+  const JOB_FIELDS = "id,name,status,date,date_end,abgabe,dauer,prio,aufwand,kontakt,notizen,projekttyp,kategorien,personen,ort,bereich,attachments,stationen,sort_order,equipment,speicherort,auftragsart,anzahl_fotos,anzahl_videos,stunden_budget";
   const [toast, setToast] = useState(null);
   const showToast = (msg, ok = true) => {
     setToast({ msg, ok });
@@ -413,6 +434,38 @@ export default function App() {
     if (next === "Archiviert") notifyMocoArchive(updated);
   };
 
+  // Speichert einen Grafik-/Nachbearbeitungs-Job - schlankere Fachlogik als
+  // Foto/Video, auf Grafik-Mitarbeiter/Mediengestalter zugeschnitten.
+  const handleSaveGrafikJob = async (values, existingId) => {
+    const row = {
+      name: values.name, status: values.status || "Neu", bereich: "Grafik",
+      auftragsart: values.auftragsart || "Bildbearbeitung", speicherort: values.speicherort || null,
+      anzahl_fotos: values.anzahl_fotos === "" ? null : Number(values.anzahl_fotos),
+      anzahl_videos: values.anzahl_videos === "" ? null : Number(values.anzahl_videos),
+      stunden_budget: values.stunden_budget === "" ? null : Number(values.stunden_budget),
+      personen: values.personen || [], person: (values.personen || []).join(", "),
+      date: values.date || null, abgabe: values.abgabe || null,
+      kontakt: values.kontakt || "", notizen: values.notizen || "", attachments: values.attachments || [],
+    };
+    if (existingId) {
+      const { data: updated, error } = await supabase.from("js_jobs").update(row).eq("id", existingId).select(JOB_FIELDS).single();
+      if (error) throw error;
+      setData(p => ({ ...p, fotostudioJobs: p.fotostudioJobs.map(j => j.id === existingId ? updated : j) }));
+    } else {
+      const { data: inserted, error } = await supabase.from("js_jobs").insert([row]).select(JOB_FIELDS).single();
+      if (error) throw error;
+      setData(p => ({ ...p, fotostudioJobs: [inserted, ...p.fotostudioJobs] }));
+    }
+  };
+
+  const handleGrafikStatusAdvance = async (job) => {
+    const idx = GRAFIK_STATUS_LIST.indexOf(job.status);
+    const next = GRAFIK_STATUS_LIST[(idx + 1) % GRAFIK_STATUS_LIST.length];
+    const { data: updated, error } = await supabase.from("js_jobs").update({ status: next }).eq("id", job.id).select(JOB_FIELDS).single();
+    if (error) { console.error(error.message); return; }
+    setData(p => ({ ...p, fotostudioJobs: p.fotostudioJobs.map(j => j.id === job.id ? updated : j) }));
+  };
+
   // Setzt das Shooting-Datum eines Jobs auf heute - wird vom "Heute"-Ablagefeld
   // (Drag & Drop aus der Liste, siehe TodayPanel) aufgerufen.
   const handleScheduleToday = async (jobId) => {
@@ -589,17 +642,13 @@ export default function App() {
             ))}
           </ListPreview>
         </BereichPage>}
-        {view === "grafik" && <BereichPage bereich={BEREICH_BY_KEY.grafik} loading={loading} onAdd={() => setQuickAddTarget("grafik")}>
+        {view === "grafik" && <BereichPage bereich={BEREICH_BY_KEY.grafik} loading={loading} onAdd={() => setGrafikJobModal({ mode: "new" })}>
           <SearchBox value={grafikSearch} onChange={setGrafikSearch} placeholder="Suche nach Name, Kontakt, Notiz, Person…" />
           <ListPreview title="Offene Grafik-Jobs" empty={grafikSearch ? "Keine Treffer für diese Suche." : "Keine offenen Jobs."} accent={BEREICH_BY_KEY.grafik.accent}>
             {visibleGrafikJobs.map(j => (
-              <PreviewRow key={j.id} title={j.name} sub={j.status} right={j.date ? fmtDate(j.date) : (j.abgabe ? "AB " + fmtDate(j.abgabe) : "")} />
+              <GrafikJobRow key={j.id} job={j} onOpen={() => setGrafikJobModal({ mode: "edit", job: j })} onAdvance={() => handleGrafikStatusAdvance(j)} />
             ))}
           </ListPreview>
-          <div style={{ marginTop: 14 }}>
-            <EmptyNotice accent={BEREICH_BY_KEY.grafik.accent} title="Formular folgt"
-              text="Die Liste zeigt die bestehenden Grafik-Aufträge. Eigene Felder (Zuständigkeit, Deadline, Schnelleingabe) werden noch mit Philipp abgestimmt." />
-          </div>
         </BereichPage>}
         {view === "messebau" && <BereichPage bereich={BEREICH_BY_KEY.messebau} loading={false} onAdd={() => setQuickAddTarget("messebau")}>
           <EmptyNotice accent={BEREICH_BY_KEY.messebau.accent} title="Noch in Abstimmung"
@@ -620,7 +669,12 @@ export default function App() {
       {addPickerOpen && (
         <div style={{ position: "fixed", bottom: 92, right: 22, background: Z.panel, border: `1px solid ${Z.border}`, borderRadius: 12, overflow: "hidden", zIndex: 40, minWidth: 190, boxShadow: "0 10px 30px rgba(0,0,0,0.5)" }}>
           {BEREICHE.filter(b => QUICK_ADD[b.key] && (!b.locked || weddingUnlocked)).map(b => (
-            <div key={b.key} onClick={() => { setAddPickerOpen(false); setQuickEditItem(null); b.key === "fotostudio" ? setJobModal({ mode: "new" }) : setQuickAddTarget(b.key); }}
+            <div key={b.key} onClick={() => {
+              setAddPickerOpen(false); setQuickEditItem(null);
+              if (b.key === "fotostudio") setJobModal({ mode: "new" });
+              else if (b.key === "grafik") setGrafikJobModal({ mode: "new" });
+              else setQuickAddTarget(b.key);
+            }}
               style={{ padding: "11px 14px", display: "flex", alignItems: "center", gap: 9, cursor: "pointer", borderBottom: `1px solid ${Z.borderSoft}`, fontSize: 13, fontWeight: 600 }}>
               <i className={`ti ${b.icon}`} style={{ fontSize: 15, color: b.accent }}></i>
               {QUICK_ADD[b.key].title}
@@ -643,6 +697,12 @@ export default function App() {
         <JobFormModal mode={jobModal.mode} job={jobModal.job} team={team} onAiAction={applyAiAction} onChatJobsCreated={handleChatJobsCreated}
           onClose={() => setJobModal(null)}
           onSubmit={async (values) => { await handleSaveJob(values, jobModal.job?.id); setJobModal(null); }} />
+      )}
+
+      {grafikJobModal && (
+        <GrafikJobFormModal mode={grafikJobModal.mode} job={grafikJobModal.job} team={team}
+          onClose={() => setGrafikJobModal(null)}
+          onSubmit={async (values) => { await handleSaveGrafikJob(values, grafikJobModal.job?.id); setGrafikJobModal(null); }} />
       )}
 
       {toast && (
@@ -1375,6 +1435,44 @@ function EquipmentView({ jobs, onJobClick }) {
   );
 }
 
+// ─── Job-Zeile Grafik/Nachbearbeitung ──────────────────────────────────────
+// Schlanker als die Foto/Video-Zeile: zeigt auf einen Blick Auftragsart,
+// Anzahl Fotos/Videos und Zuständigkeit - die Infos, die ein Grafik-
+// Mitarbeiter morgens als Erstes braucht.
+function GrafikJobRow({ job, onOpen, onAdvance }) {
+  const statusColor = GRAFIK_STATUS_CFG[job.status]?.color || Z.textSoft;
+  const personen = Array.isArray(job.personen) ? job.personen : [];
+  const mediaBits = [];
+  if (job.anzahl_fotos) mediaBits.push(`${job.anzahl_fotos} Fotos`);
+  if (job.anzahl_videos) mediaBits.push(`${job.anzahl_videos} Videos`);
+  return (
+    <div onClick={onOpen} style={{ padding: "12px 16px", borderBottom: `1px solid ${Z.borderSoft}`, display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
+      <div onClick={e => { e.stopPropagation(); onAdvance(); }} title="Status weiterschalten"
+        style={{ flexShrink: 0, padding: "3px 9px", borderRadius: 20, fontSize: 10.5, fontWeight: 700, color: statusColor, border: `1.5px solid ${statusColor}`, cursor: "pointer", whiteSpace: "nowrap" }}>
+        {job.status}
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 13.5, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", display: "flex", alignItems: "center", gap: 6 }}>
+          {job.name}
+          {Array.isArray(job.attachments) && job.attachments.length > 0 && (
+            <span title={`${job.attachments.length} Anhang/Anhänge`} style={{ display: "inline-flex", alignItems: "center", gap: 2, fontSize: 10.5, fontWeight: 700, color: Z.textSoft, flexShrink: 0 }}>
+              <i className="ti ti-paperclip" style={{ fontSize: 11 }}></i>{job.attachments.length}
+            </span>
+          )}
+        </div>
+        <div style={{ fontSize: 11.5, color: Z.textSoft, marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+          {[job.auftragsart, mediaBits.join(" · "), personen.join(", ")].filter(Boolean).join(" · ")}
+        </div>
+      </div>
+      {(job.date || job.abgabe) && (
+        <div style={{ fontSize: 11.5, fontWeight: 700, color: Z.textSoft, flexShrink: 0, textAlign: "right" }}>
+          {job.abgabe ? "AB " + fmtDate(job.abgabe) : fmtDate(job.date)}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Job-Zeile Foto-/Videoproduktion ───────────────────────────────────────
 // Klick auf die Zeile öffnet die Detailansicht, Klick auf den Status-Pill
 // schaltet den Status direkt weiter (häufigster Alltags-Workflow).
@@ -2045,6 +2143,207 @@ function JobFormModal({ mode, job, team, onAiAction, onChatJobsCreated, onClose,
                 {renderNotizen(v.notizen)}
               </div>
             )}
+          </div>
+
+          <div>
+            <FieldLabel>Anhänge</FieldLabel>
+            {(v.attachments || []).length > 0 && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 8 }}>
+                {v.attachments.map(att => (
+                  <div key={att.path} style={{ display: "flex", alignItems: "center", gap: 8, background: Z.panelAlt, border: `1px solid ${Z.border}`, borderRadius: 8, padding: "7px 10px" }}>
+                    <i className="ti ti-paperclip" style={{ fontSize: 14, color: Z.textSoft }}></i>
+                    <a href={att.url} target="_blank" rel="noreferrer" style={{ flex: 1, minWidth: 0, color: Z.text, fontSize: 12.5, textDecoration: "none", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{att.name}</a>
+                    <i className="ti ti-trash" onClick={() => handleRemoveAttachment(att)} style={{ fontSize: 14, color: Z.textSoft, cursor: "pointer" }}></i>
+                  </div>
+                ))}
+              </div>
+            )}
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "8px 14px", borderRadius: 9, border: `1.5px dashed ${Z.border}`, color: Z.textSoft, fontSize: 12.5, fontWeight: 600, cursor: uploadingAttachments ? "wait" : "pointer" }}>
+              <i className="ti ti-upload" style={{ fontSize: 14 }}></i>
+              {uploadingAttachments ? "Lädt hoch…" : "Bild/PDF hochladen"}
+              <input type="file" accept="image/*,application/pdf" multiple onChange={handleAttachmentSelect} disabled={uploadingAttachments} style={{ display: "none" }} />
+            </label>
+          </div>
+
+          {error && <div style={{ color: Z.danger, fontSize: 12.5 }}>{error}</div>}
+        </div>
+        <div style={{ padding: "13px 18px", borderTop: `1px solid ${Z.border}`, display: "flex", gap: 10, flexShrink: 0 }}>
+          <div onClick={onClose} style={{ flex: 1, padding: 12, borderRadius: 9, border: `1.5px solid ${Z.border}`, textAlign: "center", cursor: "pointer", fontSize: 14, fontWeight: 600, color: Z.textSoft }}>Abbrechen</div>
+          <div onClick={handleSubmit} style={{ flex: 2, padding: 12, borderRadius: 9, background: Z.gold, color: "#1A1A1A", textAlign: "center", cursor: busy ? "wait" : "pointer", fontSize: 14, fontWeight: 700 }}>
+            {busy ? "Speichert…" : (mode === "edit" ? "Speichern" : "Anlegen")}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Grafik-/Nachbearbeitungs-Formular ─────────────────────────────────────
+// Bewusst deutlich schlanker als das Foto/Video-Formular: dreht sich nicht um
+// Studioplanung/Equipment, sondern um das, was ein Grafik-Mitarbeiter oder
+// Mediengestalter als Erstes braucht - wo liegen die Daten, was genau ist zu
+// tun, wie viele Fotos/Videos sind betroffen, wann startet/endet es, wer
+// arbeitet dran und wie viele Stunden sind budgetiert (angelehnt an gängige
+// Agentur-Tools wie awork: Auftragsart, Zeitbudget, Zuständigkeit, Deadline).
+function GrafikJobFormModal({ mode, job, team, onClose, onSubmit }) {
+  const [v, setV] = useState(mode === "edit" && job ? {
+    name: job.name || "", status: job.status || "Neu", auftragsart: job.auftragsart || "Bildbearbeitung",
+    speicherort: job.speicherort || "", anzahl_fotos: job.anzahl_fotos ?? "", anzahl_videos: job.anzahl_videos ?? "",
+    personen: Array.isArray(job.personen) ? job.personen : [], date: job.date || "", abgabe: job.abgabe || "",
+    stunden_budget: job.stunden_budget ?? "", kontakt: job.kontakt || "", notizen: job.notizen || "",
+    attachments: Array.isArray(job.attachments) ? job.attachments : [],
+  } : EMPTY_GRAFIK_JOB_FORM);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const set = (k, val) => setV(p => ({ ...p, [k]: val }));
+  const toggleIn = (k, item) => setV(p => ({ ...p, [k]: p[k].includes(item) ? p[k].filter(x => x !== item) : [...p[k], item] }));
+
+  const [mocoSuggestions, setMocoSuggestions] = useState([]);
+  const mocoDebounce = useRef(null);
+  const handleNameChange = (val) => {
+    set("name", val);
+    clearTimeout(mocoDebounce.current);
+    if (val.trim().length < 2) { setMocoSuggestions([]); return; }
+    mocoDebounce.current = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/moco-search?term=${encodeURIComponent(val.trim())}`);
+        const result = await res.json();
+        setMocoSuggestions(res.ok ? (result.companies || []) : []);
+      } catch { setMocoSuggestions([]); }
+    }, 350);
+  };
+
+  const [uploadingAttachments, setUploadingAttachments] = useState(false);
+  const handleAttachmentSelect = async (e) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = "";
+    if (files.length === 0) return;
+    setUploadingAttachments(true);
+    for (const file of files) {
+      try {
+        const meta = await uploadAttachment(file);
+        setV(p => ({ ...p, attachments: [...(p.attachments || []), meta] }));
+      } catch (err) {
+        setError(`"${file.name}" konnte nicht hochgeladen werden: ${err.message}`);
+      }
+    }
+    setUploadingAttachments(false);
+  };
+  const handleRemoveAttachment = async (att) => {
+    try { await deleteAttachment(att.path); } catch (err) { console.error("Anhang löschen fehlgeschlagen:", err.message); }
+    setV(p => ({ ...p, attachments: (p.attachments || []).filter(a => a.path !== att.path) }));
+  };
+
+  const handleSubmit = async () => {
+    if (!v.name.trim()) { setError("Jobname / Kunde fehlt"); return; }
+    setBusy(true); setError("");
+    try {
+      await onSubmit(v);
+    } catch (e) {
+      setError(e.message);
+      setBusy(false);
+    }
+  };
+
+  const Row = ({ children }) => <div style={{ display: "flex", gap: 12 }}>{children}</div>;
+  const Col = ({ children }) => <div style={{ flex: 1, minWidth: 0 }}>{children}</div>;
+  const inputStyle = { width: "100%", padding: "9px 11px", borderRadius: 9, border: `1.5px solid ${Z.border}`, background: Z.panelAlt, color: Z.text, fontSize: 14, boxSizing: "border-box" };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 60, display: "flex", alignItems: "flex-end", justifyContent: "center" }}
+      onClick={e => e.target === e.currentTarget && onClose()}>
+      <div style={{ background: Z.panel, border: `1px solid ${Z.border}`, borderBottom: "none", width: "100%", maxWidth: 520, borderRadius: "16px 16px 0 0", maxHeight: "92vh", display: "flex", flexDirection: "column" }}>
+        <div style={{ padding: "16px 18px", borderBottom: `1px solid ${Z.border}`, display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
+          <div style={{ fontSize: 16, fontWeight: 700 }}>{mode === "edit" ? "Grafik-Job bearbeiten" : "Neuer Grafik-Job"}</div>
+          <i className="ti ti-x" onClick={onClose} style={{ fontSize: 18, color: Z.textSoft, cursor: "pointer" }}></i>
+        </div>
+        <div style={{ padding: "16px 18px", display: "flex", flexDirection: "column", gap: 14, overflowY: "auto" }}>
+          {mode === "edit" && (
+            <div>
+              <FieldLabel>Status</FieldLabel>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 7 }}>
+                {GRAFIK_STATUS_LIST.map(s => (
+                  <div key={s} onClick={() => set("status", s)} style={{
+                    padding: "6px 12px", borderRadius: 16, fontSize: 12.5, fontWeight: 700, cursor: "pointer",
+                    border: `1.5px solid ${GRAFIK_STATUS_CFG[s].color}`, background: v.status === s ? GRAFIK_STATUS_CFG[s].color : "transparent",
+                    color: v.status === s ? "#0C0C0D" : GRAFIK_STATUS_CFG[s].color,
+                  }}>{s}</div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div style={{ position: "relative" }}>
+            <FieldLabel>Jobname / Kunde *</FieldLabel>
+            <input type="text" value={v.name} onChange={e => handleNameChange(e.target.value)}
+              onBlur={() => setTimeout(() => setMocoSuggestions([]), 150)} style={inputStyle} autoFocus />
+            {mocoSuggestions.length > 0 && (
+              <div style={{ position: "absolute", top: "100%", left: 0, right: 0, marginTop: 4, background: Z.panelAlt, border: `1px solid ${Z.border}`, borderRadius: 9, overflow: "hidden", zIndex: 5, boxShadow: "0 8px 20px rgba(0,0,0,0.4)" }}>
+                <div style={{ padding: "6px 11px", fontSize: 10, fontWeight: 700, color: Z.textFaint, textTransform: "uppercase", letterSpacing: "0.05em" }}>Aus dem Moco-Firmenstamm</div>
+                {mocoSuggestions.map(c => (
+                  <div key={c.id} onMouseDown={() => { set("name", c.name); setMocoSuggestions([]); }}
+                    style={{ padding: "8px 11px", fontSize: 13.5, cursor: "pointer", borderTop: `1px solid ${Z.borderSoft}` }}>{c.name}</div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div>
+            <FieldLabel>Auftragsart</FieldLabel>
+            <select value={v.auftragsart} onChange={e => set("auftragsart", e.target.value)} style={inputStyle}>
+              {GRAFIK_AUFTRAGSART_LIST.map(o => <option key={o} value={o}>{o}</option>)}
+            </select>
+          </div>
+
+          <div>
+            <FieldLabel>Speicherort (wo liegen die Daten?)</FieldLabel>
+            <input type="text" value={v.speicherort} onChange={e => set("speicherort", e.target.value)} placeholder="z.B. Server/Kunden/REWE/KW45" style={inputStyle} />
+          </div>
+
+          <Row>
+            <Col>
+              <FieldLabel>Anzahl Fotos</FieldLabel>
+              <input type="number" min="0" value={v.anzahl_fotos} onChange={e => set("anzahl_fotos", e.target.value)} style={inputStyle} />
+            </Col>
+            <Col>
+              <FieldLabel>Anzahl Videos</FieldLabel>
+              <input type="number" min="0" value={v.anzahl_videos} onChange={e => set("anzahl_videos", e.target.value)} style={inputStyle} />
+            </Col>
+          </Row>
+
+          <div>
+            <FieldLabel>Personen</FieldLabel>
+            {team.length === 0 ? (
+              <div style={{ fontSize: 12.5, color: Z.textFaint }}>Kein Team hinterlegt.</div>
+            ) : (
+              <ChipSelect options={team} selected={v.personen} onToggle={p => toggleIn("personen", p)} accent={BEREICH_BY_KEY.grafik.accent} />
+            )}
+          </div>
+
+          <Row>
+            <Col>
+              <FieldLabel>Start</FieldLabel>
+              <input type="date" value={v.date} onChange={e => set("date", e.target.value)} style={inputStyle} />
+            </Col>
+            <Col>
+              <FieldLabel>Deadline / Abgabe</FieldLabel>
+              <input type="date" value={v.abgabe} onChange={e => set("abgabe", e.target.value)} style={inputStyle} />
+            </Col>
+          </Row>
+
+          <div>
+            <FieldLabel>Stunden-Budget</FieldLabel>
+            <input type="number" min="0" step="0.5" value={v.stunden_budget} onChange={e => set("stunden_budget", e.target.value)} placeholder="z.B. 4" style={inputStyle} />
+          </div>
+
+          <div>
+            <FieldLabel>Kontakt</FieldLabel>
+            <input type="text" value={v.kontakt} onChange={e => set("kontakt", e.target.value)} style={inputStyle} />
+          </div>
+
+          <div>
+            <FieldLabel>Was genau muss bearbeitet werden?</FieldLabel>
+            <textarea value={v.notizen} onChange={e => set("notizen", e.target.value)} rows={4} style={{ ...inputStyle, resize: "vertical", fontFamily: FONT_BODY }} />
           </div>
 
           <div>
