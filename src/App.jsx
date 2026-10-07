@@ -119,31 +119,74 @@ const QUICK_ADD = {
   // Status-Pipeline, Projekttyp/Kategorien, Personen) statt dieser generischen
   // Schnelleingabe - nur der Titel wird hier für Button-Label/Sichtbarkeit genutzt.
   fotostudio: { title: "Neuer Job" },
+  // Vollständiger Felderumfang 1:1 aus der alten Fotobox-Verwaltung übernommen
+  // (Spalten der fb_bookings-Tabelle).
   fotobox: {
     table: "fb_bookings",
     title: "Neue Fotobox Buchung",
     fields: [
-      { key: "title", label: "Titel", type: "text", required: true },
-      { key: "location", label: "Ort", type: "text" },
-      { key: "start_date", label: "Start", type: "date", required: true },
-      { key: "end_date", label: "Ende", type: "date" },
-      { key: "logistics", label: "Logistik", type: "select", options: ["aufbau", "abholung"], default: "aufbau" },
+      { key: "title", label: "Titel", type: "text", required: true, section: "Basisdaten" },
+      { key: "location", label: "Ort", type: "text", section: "Basisdaten" },
+      { key: "start_date", label: "Start", type: "date", required: true, section: "Basisdaten" },
+      { key: "end_date", label: "Ende", type: "date", section: "Basisdaten" },
+      { key: "logistics", label: "Logistik", type: "select", options: ["aufbau", "abholung"], default: "aufbau", section: "Basisdaten" },
+      { key: "status", label: "Status", type: "select", options: ["option", "fest", "storniert"], default: "option", section: "Basisdaten" },
+      { key: "media_packages", label: "Medienpakete", type: "number", default: "1", section: "Leistungen" },
+      { key: "with_printer", label: "Mit Drucker", type: "checkbox", default: true, section: "Leistungen" },
+      { key: "price_net", label: "Preis (netto)", type: "number", section: "Preise" },
+      { key: "custom_price", label: "Individueller Preis", type: "number", section: "Preise" },
+      { key: "setup_cost", label: "Aufbaukosten", type: "number", section: "Preise" },
+      { key: "invoice_status", label: "Rechnungsstatus", type: "select", options: ["keine", "gestellt", "bezahlt"], default: "keine", section: "Preise" },
+      { key: "billing_company", label: "Rechnungsfirma", type: "text", section: "Rechnungsadresse" },
+      { key: "billing_address", label: "Rechnungsadresse", type: "text", section: "Rechnungsadresse" },
+      { key: "billing_email", label: "Rechnungs-E-Mail", type: "text", section: "Rechnungsadresse" },
+      { key: "notes", label: "Notizen", type: "textarea", section: "Notizen" },
     ],
     buildRow: (v, ctx) => ({
       title: v.title, location: v.location || null, start_date: v.start_date, end_date: v.end_date || v.start_date,
-      logistics: v.logistics || "aufbau", box_id: ctx.boxId, status: "option", media_packages: 1, with_printer: true, invoice_status: "keine",
+      logistics: v.logistics || "aufbau", status: v.status || "option", box_id: ctx.boxId,
+      media_packages: v.media_packages ? Number(v.media_packages) : 1, with_printer: !!v.with_printer,
+      price_net: v.price_net ? Number(v.price_net) : null, custom_price: v.custom_price ? Number(v.custom_price) : null,
+      setup_cost: v.setup_cost ? Number(v.setup_cost) : null, invoice_status: v.invoice_status || "keine",
+      billing_company: v.billing_company || null, billing_address: v.billing_address || null, billing_email: v.billing_email || null,
+      notes: v.notes || null,
     }),
   },
+  // Vollständiger Felderumfang 1:1 aus der alten Hochzeiten-App übernommen.
   hochzeiten: {
     table: "hz_hochzeiten",
     title: "Neue Hochzeit",
     fields: [
-      { key: "partner1", label: "Partner 1", type: "text", required: true },
-      { key: "partner2", label: "Partner 2", type: "text" },
-      { key: "hochzeitsDatum", label: "Datum", type: "date" },
-      { key: "feierAdresse", label: "Ort der Feier", type: "text" },
+      { key: "partner1", label: "Partner 1", type: "text", required: true, section: "Brautpaar" },
+      { key: "partner2", label: "Partner 2", type: "text", section: "Brautpaar" },
+      { key: "status", label: "Status", type: "select", options: ["Anfrage", "Gebucht", "Abgeschlossen", "Abgesagt"], default: "Anfrage", section: "Brautpaar" },
+      { key: "telefon", label: "Telefon", type: "text", section: "Brautpaar" },
+      { key: "email", label: "E-Mail", type: "text", section: "Brautpaar" },
+      { key: "hochzeitsDatum", label: "Hochzeitsdatum", type: "date", section: "Trauung & Feier" },
+      { key: "hochzeitsUhrzeit", label: "Uhrzeit", type: "time", section: "Trauung & Feier" },
+      { key: "trauungArt", label: "Art der Trauung", type: "select", options: ["", "Standesamtliche Trauung", "Kirchliche Trauung", "Freie Trauung"], section: "Trauung & Feier" },
+      { key: "trauungAdresse", label: "Adresse Trauung", type: "text", section: "Trauung & Feier" },
+      { key: "feierAdresse", label: "Adresse Feier", type: "text", section: "Trauung & Feier" },
+      { key: "adresse", label: "Weitere Adresse (z.B. Getting Ready)", type: "text", section: "Trauung & Feier" },
+      { key: "gaeste", label: "Anzahl Gäste", type: "number", section: "Trauung & Feier" },
+      { key: "paket", label: "Paket", type: "text", section: "Leistungen" },
+      { key: "dauer", label: "Dauer", type: "text", section: "Leistungen" },
+      { key: "gettingReady", label: "Getting Ready dabei", type: "checkbox", section: "Leistungen" },
+      { key: "drohne", label: "Drohnenaufnahmen", type: "checkbox", section: "Leistungen" },
+      { key: "videoArt", label: "Video-Art", type: "text", section: "Leistungen" },
+      { key: "videoStunden", label: "Video-Stunden", type: "text", section: "Leistungen" },
+      { key: "fotobox", label: "Fotobox dabei", type: "checkbox", section: "Leistungen" },
+      { key: "fotoboxDetails", label: "Fotobox-Details", type: "text", section: "Leistungen" },
+      { key: "fotobuch", label: "Fotobuch dabei", type: "checkbox", section: "Leistungen" },
+      { key: "individualPreis", label: "Individueller Preis", type: "number", section: "Preise & Zahlung" },
+      { key: "anzahlungBetrag", label: "Anzahlung (Betrag)", type: "number", section: "Preise & Zahlung" },
+      { key: "anzahlungVereinbart", label: "Anzahlung vereinbart", type: "checkbox", section: "Preise & Zahlung" },
+      { key: "angebotGewuenscht", label: "Angebot gewünscht", type: "checkbox", section: "Preise & Zahlung" },
+      { key: "erstgespraechDatum", label: "Erstgespräch – Datum", type: "date", section: "Erstgespräch" },
+      { key: "erstgespraechAdresse", label: "Erstgespräch – Ort", type: "text", section: "Erstgespräch" },
+      { key: "notizen", label: "Notizen", type: "textarea", section: "Notizen" },
     ],
-    buildRow: (v) => ({ id: Date.now(), created_at: new Date().toISOString(), data: { ...v, status: "Anfrage" } }),
+    buildRow: (v) => ({ ...v, status: v.status || "Anfrage" }),
   },
   grafik: null,
   messebau: null,
@@ -162,6 +205,7 @@ export default function App() {
     try { return sessionStorage.getItem("zp-app-unlocked") === "1"; } catch { return false; }
   });
   const [quickAddTarget, setQuickAddTarget] = useState(null);
+  const [quickEditItem, setQuickEditItem] = useState(null);
   const [jobModal, setJobModal] = useState(null);
   const [addPickerOpen, setAddPickerOpen] = useState(false);
   const [fotoSearch, setFotoSearch] = useState("");
@@ -236,7 +280,7 @@ export default function App() {
       const [hz, js, fb, boxes, core, abs] = await Promise.all([
         supabase.from("hz_hochzeiten").select("id,data,created_at"),
         supabase.from("js_jobs").select(JOB_FIELDS).order("created_at", { ascending: false }),
-        supabase.from("fb_bookings").select("id,title,location,start_date,end_date,status").order("start_date", { ascending: true }),
+        supabase.from("fb_bookings").select("*").order("start_date", { ascending: true }),
         supabase.from("fb_boxes").select("id,name"),
         supabase.from("core_team").select("name").order("name", { ascending: true }),
         supabase.from("js_absences").select("*").order("start_date", { ascending: true }),
@@ -303,11 +347,26 @@ export default function App() {
 
   const handleInsert = async (bereichKey, row) => {
     const cfg = QUICK_ADD[bereichKey];
-    const { data: inserted, error } = await supabase.from(cfg.table).insert([row]).select().single();
+    const payload = bereichKey === "hochzeiten" ? { id: Date.now(), created_at: new Date().toISOString(), data: row } : row;
+    const { data: inserted, error } = await supabase.from(cfg.table).insert([payload]).select().single();
     if (error) throw error;
     setData(p => {
       if (bereichKey === "fotobox") return { ...p, bookings: [...p.bookings, inserted].sort((a, b) => a.start_date.localeCompare(b.start_date)) };
       if (bereichKey === "hochzeiten") return { ...p, hochzeiten: [...p.hochzeiten, inserted] };
+      return p;
+    });
+  };
+
+  // Bearbeitet eine bestehende Fotobox-Buchung oder Hochzeit über dasselbe
+  // Formular (Schnelleingabe dient hier zugleich als Bearbeiten-Dialog).
+  const handleUpdateQuickAdd = async (bereichKey, item, row) => {
+    const cfg = QUICK_ADD[bereichKey];
+    const payload = bereichKey === "hochzeiten" ? { data: row } : row;
+    const { data: updated, error } = await supabase.from(cfg.table).update(payload).eq("id", item.id).select().single();
+    if (error) throw error;
+    setData(p => {
+      if (bereichKey === "fotobox") return { ...p, bookings: p.bookings.map(b => b.id === item.id ? updated : b).sort((a, b) => a.start_date.localeCompare(b.start_date)) };
+      if (bereichKey === "hochzeiten") return { ...p, hochzeiten: p.hochzeiten.map(h => h.id === item.id ? updated : h) };
       return p;
     });
   };
@@ -516,17 +575,17 @@ export default function App() {
             </ListPreview>
           )}
         </BereichPage>}
-        {view === "fotobox" && <BereichPage bereich={BEREICH_BY_KEY.fotobox} loading={loading} onAdd={() => setQuickAddTarget("fotobox")}>
+        {view === "fotobox" && <BereichPage bereich={BEREICH_BY_KEY.fotobox} loading={loading} onAdd={() => { setQuickEditItem(null); setQuickAddTarget("fotobox"); }}>
           <ListPreview title="Anstehende Buchungen" empty="Keine anstehenden Buchungen." accent={BEREICH_BY_KEY.fotobox.accent}>
             {upcomingBookings.map(b => (
-              <PreviewRow key={b.id} title={b.title} sub={b.location || ""} right={fmtDate(b.start_date)} />
+              <PreviewRow key={b.id} title={b.title} sub={b.location || ""} right={fmtDate(b.start_date)} onClick={() => { setQuickAddTarget("fotobox"); setQuickEditItem(b); }} />
             ))}
           </ListPreview>
         </BereichPage>}
-        {view === "hochzeiten" && weddingUnlocked && <BereichPage bereich={BEREICH_BY_KEY.hochzeiten} loading={loading} onAdd={() => setQuickAddTarget("hochzeiten")}>
+        {view === "hochzeiten" && weddingUnlocked && <BereichPage bereich={BEREICH_BY_KEY.hochzeiten} loading={loading} onAdd={() => { setQuickEditItem(null); setQuickAddTarget("hochzeiten"); }}>
           <ListPreview title="Anstehende Hochzeiten" empty="Keine anstehenden Hochzeiten." accent={BEREICH_BY_KEY.hochzeiten.accent}>
             {upcomingWeddings.map(h => (
-              <PreviewRow key={h.id} title={`${h.data.partner1 || "?"} & ${h.data.partner2 || "?"}`} sub={h.data.feierAdresse || h.data.trauungAdresse || ""} right={fmtDate(h.data.hochzeitsDatum)} />
+              <PreviewRow key={h.id} title={`${h.data.partner1 || "?"} & ${h.data.partner2 || "?"}`} sub={h.data.feierAdresse || h.data.trauungAdresse || ""} right={fmtDate(h.data.hochzeitsDatum)} onClick={() => { setQuickAddTarget("hochzeiten"); setQuickEditItem(h); }} />
             ))}
           </ListPreview>
         </BereichPage>}
@@ -561,7 +620,7 @@ export default function App() {
       {addPickerOpen && (
         <div style={{ position: "fixed", bottom: 92, right: 22, background: Z.panel, border: `1px solid ${Z.border}`, borderRadius: 12, overflow: "hidden", zIndex: 40, minWidth: 190, boxShadow: "0 10px 30px rgba(0,0,0,0.5)" }}>
           {BEREICHE.filter(b => QUICK_ADD[b.key] && (!b.locked || weddingUnlocked)).map(b => (
-            <div key={b.key} onClick={() => { setAddPickerOpen(false); b.key === "fotostudio" ? setJobModal({ mode: "new" }) : setQuickAddTarget(b.key); }}
+            <div key={b.key} onClick={() => { setAddPickerOpen(false); setQuickEditItem(null); b.key === "fotostudio" ? setJobModal({ mode: "new" }) : setQuickAddTarget(b.key); }}
               style={{ padding: "11px 14px", display: "flex", alignItems: "center", gap: 9, cursor: "pointer", borderBottom: `1px solid ${Z.borderSoft}`, fontSize: 13, fontWeight: 600 }}>
               <i className={`ti ${b.icon}`} style={{ fontSize: 15, color: b.accent }}></i>
               {QUICK_ADD[b.key].title}
@@ -571,9 +630,13 @@ export default function App() {
       )}
 
       {quickAddTarget && (
-        <QuickAddModal bereichKey={quickAddTarget} bereich={BEREICH_BY_KEY[quickAddTarget]} boxId={data.boxes[0]?.id}
-          onClose={() => setQuickAddTarget(null)}
-          onSubmit={async (row) => { await handleInsert(quickAddTarget, row); setQuickAddTarget(null); }} />
+        <QuickAddModal bereichKey={quickAddTarget} bereich={BEREICH_BY_KEY[quickAddTarget]} boxId={data.boxes[0]?.id} item={quickEditItem}
+          onClose={() => { setQuickAddTarget(null); setQuickEditItem(null); }}
+          onSubmit={async (row) => {
+            if (quickEditItem) await handleUpdateQuickAdd(quickAddTarget, quickEditItem, row);
+            else await handleInsert(quickAddTarget, row);
+            setQuickAddTarget(null); setQuickEditItem(null);
+          }} />
       )}
 
       {jobModal && (
@@ -765,9 +828,9 @@ function ListPreview({ title, empty, children, accent = Z.gold }) {
   );
 }
 
-function PreviewRow({ title, sub, right }) {
+function PreviewRow({ title, sub, right, onClick }) {
   return (
-    <div style={{ padding: "11px 16px", borderBottom: `1px solid ${Z.borderSoft}`, display: "flex", alignItems: "center", gap: 10 }}>
+    <div onClick={onClick} style={{ padding: "11px 16px", borderBottom: `1px solid ${Z.borderSoft}`, display: "flex", alignItems: "center", gap: 10, cursor: onClick ? "pointer" : "default" }}>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 13.5, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{title}</div>
         {sub && <div style={{ fontSize: 11.5, color: Z.textSoft, marginTop: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{sub}</div>}
@@ -1407,11 +1470,21 @@ function PasswordGate({ endpoint, storageKey, accent, title, text, onUnlock }) {
 }
 
 // ─── Schnelleingabe-Modal ───────────────────────────────────────────────────
-function QuickAddModal({ bereichKey, bereich, boxId, onClose, onSubmit }) {
+// Dient zugleich als Neuanlage- UND Bearbeiten-Dialog für Fotobox-Buchungen
+// und Hochzeiten (volles Formular statt nur Schnelleingabe): wird ein "item"
+// übergeben, ist es ein Bearbeiten-Vorgang (Update statt Insert).
+function QuickAddModal({ bereichKey, bereich, boxId, item, onClose, onSubmit }) {
   const cfg = QUICK_ADD[bereichKey];
+  const isEdit = !!item;
+  // Hochzeiten speichern alle Felder in der jsonb-Spalte "data", Fotobox-
+  // Buchungen als flache Tabellenspalten - beim Bearbeiten entsprechend lesen.
+  const source = isEdit ? (bereichKey === "hochzeiten" ? (item.data || {}) : item) : {};
   const [values, setValues] = useState(() => {
     const init = {};
-    (cfg?.fields || []).forEach(f => { init[f.key] = f.default || ""; });
+    (cfg?.fields || []).forEach(f => {
+      const v = source[f.key];
+      init[f.key] = v !== undefined && v !== null ? v : (f.type === "checkbox" ? !!f.default : (f.default ?? ""));
+    });
     return init;
   });
   const [busy, setBusy] = useState(false);
@@ -1445,29 +1518,62 @@ function QuickAddModal({ bereichKey, bereich, boxId, onClose, onSubmit }) {
     }
   };
 
+  // Felder in der definierten Reihenfolge nach "section" gruppieren, damit
+  // der umfangreiche Felderumfang (v.a. bei Hochzeiten) übersichtlich bleibt.
+  const sections = [];
+  cfg.fields.forEach(f => {
+    const name = f.section || "";
+    let bucket = sections[sections.length - 1]?.name === name ? sections[sections.length - 1] : null;
+    if (!bucket) { bucket = { name, fields: [] }; sections.push(bucket); }
+    bucket.fields.push(f);
+  });
+
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 60, display: "flex", alignItems: "flex-end", justifyContent: "center" }}
       onClick={e => e.target === e.currentTarget && onClose()}>
-      <div style={{ background: Z.panel, border: `1px solid ${Z.border}`, borderBottom: "none", width: "100%", maxWidth: 480, borderRadius: "16px 16px 0 0", maxHeight: "88vh", display: "flex", flexDirection: "column" }}>
+      <div style={{ background: Z.panel, border: `1px solid ${Z.border}`, borderBottom: "none", width: "100%", maxWidth: 520, borderRadius: "16px 16px 0 0", maxHeight: "92vh", display: "flex", flexDirection: "column" }}>
         <div style={{ padding: "16px 18px", borderBottom: `1px solid ${Z.border}`, display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
-          <div style={{ fontSize: 16, fontWeight: 700 }}>{cfg.title}</div>
+          <div style={{ fontSize: 16, fontWeight: 700 }}>{isEdit ? `${bereich?.label || ""} bearbeiten` : cfg.title}</div>
           <i className="ti ti-x" onClick={onClose} style={{ fontSize: 18, color: Z.textSoft, cursor: "pointer" }}></i>
         </div>
-        <div style={{ padding: "16px 18px", display: "flex", flexDirection: "column", gap: 14, overflowY: "auto" }}>
-          {cfg.fields.map(f => (
-            <div key={f.key}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: Z.textSoft, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 6 }}>
-                {f.label}{f.required && " *"}
-              </div>
-              {f.type === "select" ? (
-                <select value={values[f.key]} onChange={e => set(f.key, e.target.value)}
-                  style={{ width: "100%", padding: "9px 11px", borderRadius: 9, border: `1.5px solid ${Z.border}`, background: Z.panelAlt, color: Z.text, fontSize: 14 }}>
-                  {f.options.map(o => <option key={o} value={o}>{o}</option>)}
-                </select>
-              ) : (
-                <input type={f.type} value={values[f.key]} onChange={e => set(f.key, e.target.value)}
-                  style={{ width: "100%", padding: "9px 11px", borderRadius: 9, border: `1.5px solid ${Z.border}`, background: Z.panelAlt, color: Z.text, fontSize: 14, boxSizing: "border-box" }} />
+        <div style={{ padding: "16px 18px", display: "flex", flexDirection: "column", gap: 16, overflowY: "auto" }}>
+          {sections.map((sec, i) => (
+            <div key={i} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              {sec.name && (
+                <div style={{ fontSize: 11, fontWeight: 800, color: Z.gold, textTransform: "uppercase", letterSpacing: "0.06em", borderTop: i > 0 ? `1px solid ${Z.borderSoft}` : "none", paddingTop: i > 0 ? 14 : 0, marginTop: i > 0 ? 2 : 0 }}>
+                  {sec.name}
+                </div>
               )}
+              {sec.fields.map(f => (
+                <div key={f.key}>
+                  {f.type === "checkbox" ? (
+                    <div onClick={() => set(f.key, !values[f.key])} style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
+                      <div style={{ width: 20, height: 20, borderRadius: 5, border: `1.5px solid ${values[f.key] ? Z.gold : Z.border}`, background: values[f.key] ? Z.gold : "transparent", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                        {values[f.key] && <i className="ti ti-check" style={{ fontSize: 13, color: "#1A1A1A", fontWeight: 900 }}></i>}
+                      </div>
+                      <div style={{ fontSize: 13.5, fontWeight: 600 }}>{f.label}</div>
+                    </div>
+                  ) : (
+                    <>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: Z.textSoft, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 6 }}>
+                        {f.label}{f.required && " *"}
+                      </div>
+                      {f.type === "select" ? (
+                        <select value={values[f.key]} onChange={e => set(f.key, e.target.value)}
+                          style={{ width: "100%", padding: "9px 11px", borderRadius: 9, border: `1.5px solid ${Z.border}`, background: Z.panelAlt, color: Z.text, fontSize: 14 }}>
+                          {f.options.map(o => <option key={o} value={o}>{o || "–"}</option>)}
+                        </select>
+                      ) : f.type === "textarea" ? (
+                        <textarea value={values[f.key]} onChange={e => set(f.key, e.target.value)} rows={3}
+                          style={{ width: "100%", padding: "9px 11px", borderRadius: 9, border: `1.5px solid ${Z.border}`, background: Z.panelAlt, color: Z.text, fontSize: 14, boxSizing: "border-box", resize: "vertical", fontFamily: FONT_BODY }} />
+                      ) : (
+                        <input type={f.type} value={values[f.key]} onChange={e => set(f.key, e.target.value)}
+                          style={{ width: "100%", padding: "9px 11px", borderRadius: 9, border: `1.5px solid ${Z.border}`, background: Z.panelAlt, color: Z.text, fontSize: 14, boxSizing: "border-box" }} />
+                      )}
+                    </>
+                  )}
+                </div>
+              ))}
             </div>
           ))}
           {error && <div style={{ color: Z.danger, fontSize: 12.5 }}>{error}</div>}
@@ -1475,7 +1581,7 @@ function QuickAddModal({ bereichKey, bereich, boxId, onClose, onSubmit }) {
         <div style={{ padding: "13px 18px", borderTop: `1px solid ${Z.border}`, display: "flex", gap: 10, flexShrink: 0 }}>
           <div onClick={onClose} style={{ flex: 1, padding: 12, borderRadius: 9, border: `1.5px solid ${Z.border}`, textAlign: "center", cursor: "pointer", fontSize: 14, fontWeight: 600, color: Z.textSoft }}>Abbrechen</div>
           <div onClick={handleSubmit} style={{ flex: 2, padding: 12, borderRadius: 9, background: Z.gold, color: "#1A1A1A", textAlign: "center", cursor: busy ? "wait" : "pointer", fontSize: 14, fontWeight: 700 }}>
-            {busy ? "Speichert…" : "Hinzufügen"}
+            {busy ? "Speichert…" : isEdit ? "Speichern" : "Hinzufügen"}
           </div>
         </div>
       </div>
