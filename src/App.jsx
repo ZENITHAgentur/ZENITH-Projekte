@@ -232,10 +232,10 @@ export default function App() {
   const [team, setTeam] = useState([]);
   const [absences, setAbsences] = useState([]);
   const [weddingUnlocked, setWeddingUnlocked] = useState(() => {
-    try { return sessionStorage.getItem("zp-wedding-unlocked") === "1"; } catch { return false; }
+    try { return localStorage.getItem("zp-wedding-unlocked") === "1"; } catch { return false; }
   });
   const [appUnlocked, setAppUnlocked] = useState(() => {
-    try { return sessionStorage.getItem("zp-app-unlocked") === "1"; } catch { return false; }
+    try { return localStorage.getItem("zp-app-unlocked") === "1"; } catch { return false; }
   });
   const [quickAddTarget, setQuickAddTarget] = useState(null);
   const [quickEditItem, setQuickEditItem] = useState(null);
@@ -1609,7 +1609,7 @@ function PasswordGate({ endpoint, storageKey, accent, title, text, onUnlock }) {
       });
       const result = await res.json();
       if (!res.ok || !result.ok) throw new Error(result.error || "Falsches Passwort");
-      try { sessionStorage.setItem(storageKey, "1"); } catch {}
+      try { localStorage.setItem(storageKey, "1"); } catch {}
       onUnlock();
     } catch (e) {
       setError(e.message);
