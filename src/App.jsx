@@ -194,7 +194,7 @@ const QUICK_ADD = {
       },
       { key: "setup_cost", label: "Aufbaukosten (€)", type: "number", section: "Preise" },
       { key: "invoice_status", label: "Rechnungsstatus", type: "select", options: ["keine", "gestellt", "bezahlt"], default: "keine", section: "Preise" },
-      { key: "billing_company", label: "Rechnungsfirma", type: "text", section: "Rechnungsadresse" },
+      { key: "billing_company", label: "Rechnungsfirma", type: "text", section: "Rechnungsadresse", mocoAutocomplete: true },
       { key: "billing_address", label: "Rechnungsadresse", type: "text", section: "Rechnungsadresse" },
       { key: "billing_email", label: "Rechnungs-E-Mail", type: "text", section: "Rechnungsadresse" },
       { key: "notes", label: "Notizen", type: "textarea", section: "Notizen" },
@@ -1895,9 +1895,29 @@ function QuickAddModal({ bereichKey, bereich, boxId, item, team, onClose, onSubm
   const [error, setError] = useState("");
   const set = (k, v) => setValues(p => ({ ...p, [k]: v }));
 
+  // Firmen-Autocomplete aus dem Moco-Firmenstamm für Felder mit
+  // "mocoAutocomplete: true" (aktuell: Rechnungsfirma bei Fotobox) -
+  // gleiches Muster wie beim Kunde-Feld in JobFormModal/GrafikJobFormModal.
+  const [mocoSuggestions, setMocoSuggestions] = useState([]);
+  const [mocoFieldKey, setMocoFieldKey] = useState(null);
+  const mocoDebounce = useRef(null);
+  const handleMocoFieldChange = (key, val) => {
+    set(key, val);
+    setMocoFieldKey(key);
+    clearTimeout(mocoDebounce.current);
+    if (val.trim().length < 2) { setMocoSuggestions([]); return; }
+    mocoDebounce.current = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/moco-search?term=${encodeURIComponent(val.trim())}`);
+        const result = await res.json();
+        setMocoSuggestions(res.ok ? (result.companies || []) : []);
+      } catch { setMocoSuggestions([]); }
+    }, 350);
+  };
+
   // Fotobox: Aufbaukosten anhand der eingetragenen Ortsangabe vorschlagen
-  // (api/fotobox-distance.js, Luftlinie ab Studio-Adresse) - Vorschlag bleibt
-  // im Feld "Aufbaukosten" danach frei editierbar.
+  // (api/fotobox.js, action "distance", Luftlinie ab Studio-Adresse) -
+  // Vorschlag bleibt im Feld "Aufbaukosten" danach frei editierbar.
   const [distanceBusy, setDistanceBusy] = useState(false);
   const [distanceInfo, setDistanceInfo] = useState(null);
   const [distanceError, setDistanceError] = useState("");
@@ -2003,7 +2023,7 @@ function QuickAddModal({ bereichKey, bereich, boxId, item, team, onClose, onSubm
                 </div>
               )}
               {sec.fields.filter(f => !f.showIf || f.showIf(values)).map(f => (
-                <div key={f.key}>
+                <div key={f.key} style={f.mocoAutocomplete ? { position: "relative" } : undefined}>
                   {f.type === "distance-helper" ? (
                     <div>
                       <div onClick={calcSetupCost}
@@ -2037,6 +2057,21 @@ function QuickAddModal({ bereichKey, bereich, boxId, item, team, onClose, onSubm
                       ) : f.type === "textarea" ? (
                         <textarea value={values[f.key]} onChange={e => set(f.key, e.target.value)} rows={3}
                           style={{ width: "100%", padding: "9px 11px", borderRadius: 9, border: `1.5px solid ${Z.border}`, background: Z.panelAlt, color: Z.text, fontSize: 14, boxSizing: "border-box", resize: "vertical", fontFamily: FONT_BODY }} />
+                      ) : f.mocoAutocomplete ? (
+                        <>
+                          <input type={f.type} value={values[f.key]} onChange={e => handleMocoFieldChange(f.key, e.target.value)}
+                            onBlur={() => setTimeout(() => setMocoSuggestions([]), 150)}
+                            style={{ width: "100%", padding: "9px 11px", borderRadius: 9, border: `1.5px solid ${Z.border}`, background: Z.panelAlt, color: Z.text, fontSize: 14, boxSizing: "border-box" }} />
+                          {mocoFieldKey === f.key && mocoSuggestions.length > 0 && (
+                            <div style={{ position: "absolute", top: "100%", left: 0, right: 0, marginTop: 4, background: Z.panelAlt, border: `1px solid ${Z.border}`, borderRadius: 9, overflow: "hidden", zIndex: 5, boxShadow: "0 8px 20px rgba(0,0,0,0.4)" }}>
+                              <div style={{ padding: "6px 11px", fontSize: 10, fontWeight: 700, color: Z.textFaint, textTransform: "uppercase", letterSpacing: "0.05em" }}>Aus dem Moco-Firmenstamm</div>
+                              {mocoSuggestions.map(c => (
+                                <div key={c.id} onMouseDown={() => { set(f.key, c.name); setMocoSuggestions([]); }}
+                                  style={{ padding: "8px 11px", fontSize: 13.5, cursor: "pointer", borderTop: `1px solid ${Z.borderSoft}` }}>{c.name}</div>
+                              ))}
+                            </div>
+                          )}
+                        </>
                       ) : (
                         <input type={f.type} value={values[f.key]} onChange={e => set(f.key, e.target.value)}
                           style={{ width: "100%", padding: "9px 11px", borderRadius: 9, border: `1.5px solid ${Z.border}`, background: Z.panelAlt, color: Z.text, fontSize: 14, boxSizing: "border-box" }} />
