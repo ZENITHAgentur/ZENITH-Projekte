@@ -23,9 +23,12 @@ export default async function handler(req, res) {
     );
     if (!r.ok) throw new Error(await r.text());
     const companies = await r.json();
+    // Neben Name auch Adresse/Rechnungs-E-Mail durchreichen, damit das
+    // Frontend bei Auswahl eines Vorschlags bekannte Felder direkt mit
+    // ausfüllen kann (z.B. Rechnungsadresse bei Fotobox-Buchungen).
     const simplified = (Array.isArray(companies) ? companies : [])
       .slice(0, 8)
-      .map(c => ({ id: c.id, name: c.name }));
+      .map(c => ({ id: c.id, name: c.name, address: c.address || null, billing_email: c.billing_email || null }));
     return res.status(200).json({ companies: simplified });
   } catch (e) {
     return res.status(500).json({ error: e.message });

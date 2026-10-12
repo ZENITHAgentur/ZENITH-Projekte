@@ -194,8 +194,13 @@ const QUICK_ADD = {
       },
       { key: "setup_cost", label: "Aufbaukosten (€)", type: "number", section: "Preise" },
       { key: "invoice_status", label: "Rechnungsstatus", type: "select", options: ["keine", "gestellt", "bezahlt"], default: "keine", section: "Preise" },
-      { key: "billing_company", label: "Rechnungsfirma", type: "text", section: "Rechnungsadresse", mocoAutocomplete: true },
-      { key: "billing_address", label: "Rechnungsadresse", type: "text", section: "Rechnungsadresse" },
+      {
+        key: "billing_company", label: "Rechnungsfirma", type: "text", section: "Rechnungsadresse", mocoAutocomplete: true,
+        // Bei Auswahl eines Moco-Firmenvorschlags auch bekannte Felder aus
+        // dem Firmenstamm direkt mit übernehmen (Adresse, Rechnungs-E-Mail).
+        mocoFill: { billing_address: "address", billing_email: "billing_email" },
+      },
+      { key: "billing_address", label: "Rechnungsadresse", type: "textarea", section: "Rechnungsadresse" },
       { key: "billing_email", label: "Rechnungs-E-Mail", type: "text", section: "Rechnungsadresse" },
       { key: "notes", label: "Notizen", type: "textarea", section: "Notizen" },
     ],
@@ -2066,7 +2071,18 @@ function QuickAddModal({ bereichKey, bereich, boxId, item, team, onClose, onSubm
                             <div style={{ position: "absolute", top: "100%", left: 0, right: 0, marginTop: 4, background: Z.panelAlt, border: `1px solid ${Z.border}`, borderRadius: 9, overflow: "hidden", zIndex: 5, boxShadow: "0 8px 20px rgba(0,0,0,0.4)" }}>
                               <div style={{ padding: "6px 11px", fontSize: 10, fontWeight: 700, color: Z.textFaint, textTransform: "uppercase", letterSpacing: "0.05em" }}>Aus dem Moco-Firmenstamm</div>
                               {mocoSuggestions.map(c => (
-                                <div key={c.id} onMouseDown={() => { set(f.key, c.name); setMocoSuggestions([]); }}
+                                <div key={c.id} onMouseDown={() => {
+                                  setValues(p => {
+                                    const next = { ...p, [f.key]: c.name };
+                                    if (f.mocoFill) {
+                                      Object.entries(f.mocoFill).forEach(([targetKey, companyField]) => {
+                                        if (c[companyField]) next[targetKey] = c[companyField];
+                                      });
+                                    }
+                                    return next;
+                                  });
+                                  setMocoSuggestions([]);
+                                }}
                                   style={{ padding: "8px 11px", fontSize: 13.5, cursor: "pointer", borderTop: `1px solid ${Z.borderSoft}` }}>{c.name}</div>
                               ))}
                             </div>
