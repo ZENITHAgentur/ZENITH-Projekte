@@ -94,7 +94,7 @@ export async function mocoCreateInvoiceForBooking(booking) {
       customer_id: company.id,
       recipient_address: booking.billing_address || company.name,
       title: booking.title || "Fotobox-Miete",
-      date: todayStr, due_date: dueDateStr, currency: "EUR", items,
+      date: todayStr, due_date: dueDateStr, currency: "EUR", tax: 19.0, items,
     }),
   });
   if (!r.ok) throw new Error(`Moco-Rechnung anlegen fehlgeschlagen: ${await r.text()}`);
