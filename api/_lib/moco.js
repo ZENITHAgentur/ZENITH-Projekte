@@ -62,6 +62,46 @@ export async function mocoCreateProject({ name, customerId, leaderId, currency =
 // passende Firma, ermittelt den Verantwortlichen und legt das Projekt an.
 // Gibt {matched:false, searchTerm} zurück, wenn keine Firma gefunden wurde -
 // das ist kein Fehler, sondern ein normaler Fall (noch kein Moco-Kunde).
+// Legt eine Rechnung in Moco für eine Fotobox-Buchung an (Button "Rechnung
+// in Moco erstellen" im Fotobox-Formular). Sucht die Firma über
+// billing_company (Fallback: Titel), ein Posten für den Fotobox-Preis sowie
+// - falls vorhanden - einen zweiten Posten für die Aufbaukosten.
+// Hinweis: Feldnamen der Moco-Rechnungs-API (items/recipient_address/...)
+// sind nach bestem Wissen aus der bestehenden Moco-Anbindung übernommen,
+// konnten in dieser Umgebung aber nicht gegen einen echten Moco-Account
+// getestet werden (kein Netzwerkzugriff auf mocoapp.com im Dev-Sandbox) -
+// bei abweichendem Verhalten bitte Rückmeldung, dann wird nachjustiert.
+export async function mocoCreateInvoiceForBooking(booking) {
+  const env = mocoEnv();
+  if (!env) throw new Error("MOCO_DOMAIN oder MOCO_API_KEY fehlt.");
+  const searchTerm = booking.billing_company || booking.title;
+  if (!searchTerm) throw new Error("Keine Rechnungsfirma/kein Titel für die Moco-Suche angegeben.");
+  const company = await mocoSearchCompany(searchTerm);
+  if (!company) throw new Error(`Keine passende Firma in Moco gefunden für "${searchTerm}". Bitte Rechnungsfirma prüfen/in Moco anlegen.`);
+
+  const items = [];
+  const boxPrice = booking.custom_price ?? booking.price_net;
+  if (boxPrice) items.push({ type: "item", title: booking.title || "Fotobox-Miete", quantity: 1, unit: "Stück", unit_price: boxPrice });
+  if (booking.setup_cost) items.push({ type: "item", title: "Auf-/Abbau & Logistik", quantity: 1, unit: "Pauschale", unit_price: booking.setup_cost });
+  if (items.length === 0) throw new Error("Kein Preis hinterlegt - Rechnung kann nicht erstellt werden.");
+
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const dueDateStr = new Date(Date.now() + 14 * 86400000).toISOString().slice(0, 10);
+
+  const r = await fetch(`${env.base}/invoices`, {
+    method: "POST", headers: env.headers,
+    body: JSON.stringify({
+      customer_id: company.id,
+      recipient_address: booking.billing_address || company.name,
+      title: booking.title || "Fotobox-Miete",
+      date: todayStr, due_date: dueDateStr, currency: "EUR", items,
+    }),
+  });
+  if (!r.ok) throw new Error(`Moco-Rechnung anlegen fehlgeschlagen: ${await r.text()}`);
+  const invoice = await r.json();
+  return { invoiceId: invoice.id, invoiceNumber: invoice.identifier || invoice.invoice_number || null, companyName: company.name };
+}
+
 export async function mocoCreateProjectForJob(job) {
   if (!job?.name) throw new Error("Kein Job übermittelt");
   const searchTerm = job.name.includes(" – ") ? job.name.split(" – ")[0].trim() : job.name.trim();

@@ -47,11 +47,19 @@ const STATUS_CFG = {
 // Mediengestalter, die wissen müssen, wo die Daten liegen, was genau zu tun
 // ist, wie viele Fotos/Videos betroffen sind, wann es losgeht/fertig sein
 // muss, wer dran arbeitet und wie viele Stunden budgetiert sind.
-const GRAFIK_STATUS_LIST = ["Neu", "In Bearbeitung", "Fertig", "Archiviert"];
+const GRAFIK_STATUS_LIST = [
+  "Neu", "In Arbeit", "Warten auf Feedback (Kunde)", "Warten auf Feedback (intern)",
+  "Pausiert", "Abgeschlossen", "Freigegeben", "Kann abgerechnet werden", "Archiviert",
+];
 const GRAFIK_STATUS_CFG = {
   "Neu": { color: "#4ADE80" },
-  "In Bearbeitung": { color: "#4F9CDB" },
-  "Fertig": { color: "#9A968C" },
+  "In Arbeit": { color: "#4F9CDB" },
+  "Warten auf Feedback (Kunde)": { color: "#E8963C" },
+  "Warten auf Feedback (intern)": { color: "#E0BE5C" },
+  "Pausiert": { color: "#9A968C" },
+  "Abgeschlossen": { color: "#45B990" },
+  "Freigegeben": { color: "#2FAE60" },
+  "Kann abgerechnet werden": { color: "#C9A227" },
   "Archiviert": { color: "#A66FE0" },
 };
 const GRAFIK_AUFTRAGSART_LIST = ["Bildbearbeitung", "Anzeige", "Nachbestellung", "Katalog", "Sonstiges"];
@@ -163,24 +171,48 @@ const QUICK_ADD = {
       { key: "status", label: "Status", type: "select", options: ["option", "fest", "storniert"], default: "option", section: "Basisdaten" },
       { key: "media_packages", label: "Medienpakete", type: "number", default: "1", section: "Leistungen" },
       { key: "with_printer", label: "Mit Drucker", type: "checkbox", default: true, section: "Leistungen" },
-      { key: "price_net", label: "Preis (netto)", type: "number", section: "Preise" },
-      { key: "custom_price", label: "Individueller Preis", type: "number", section: "Preise" },
-      { key: "setup_cost", label: "Aufbaukosten", type: "number", section: "Preise" },
+      {
+        key: "price_tier", label: "Preis", type: "select", section: "Preise",
+        options: ["300 € (Standard)", "250 € (Rabatt)", "200 € (Rabatt)", "Individuell"], default: "300 € (Standard)",
+        // Beim Bearbeiten einer bestehenden Buchung aus dem gespeicherten
+        // price_net-Wert zurück auf die passende Preisstufe schließen.
+        deriveValue: s => {
+          if (s.price_net == null) return undefined;
+          if (s.price_net === 300) return "300 € (Standard)";
+          if (s.price_net === 250) return "250 € (Rabatt)";
+          if (s.price_net === 200) return "200 € (Rabatt)";
+          return "Individuell";
+        },
+      },
+      {
+        key: "custom_price", label: "Individueller Preis (€, netto)", type: "number", section: "Preise",
+        showIf: v => v.price_tier === "Individuell",
+        deriveValue: s => (s.custom_price != null ? s.custom_price : (![300, 250, 200].includes(s.price_net) ? s.price_net : undefined)),
+      },
+      {
+        key: "location_distance_hint", label: "", type: "distance-helper", section: "Preise",
+      },
+      { key: "setup_cost", label: "Aufbaukosten (€)", type: "number", section: "Preise" },
       { key: "invoice_status", label: "Rechnungsstatus", type: "select", options: ["keine", "gestellt", "bezahlt"], default: "keine", section: "Preise" },
       { key: "billing_company", label: "Rechnungsfirma", type: "text", section: "Rechnungsadresse" },
       { key: "billing_address", label: "Rechnungsadresse", type: "text", section: "Rechnungsadresse" },
       { key: "billing_email", label: "Rechnungs-E-Mail", type: "text", section: "Rechnungsadresse" },
       { key: "notes", label: "Notizen", type: "textarea", section: "Notizen" },
     ],
-    buildRow: (v, ctx) => ({
-      title: v.title, location: v.location || null, start_date: v.start_date, end_date: v.end_date || v.start_date,
-      logistics: v.logistics || "aufbau", status: v.status || "option", box_id: ctx.boxId,
-      media_packages: v.media_packages ? Number(v.media_packages) : 1, with_printer: !!v.with_printer,
-      price_net: v.price_net ? Number(v.price_net) : null, custom_price: v.custom_price ? Number(v.custom_price) : null,
-      setup_cost: v.setup_cost ? Number(v.setup_cost) : null, invoice_status: v.invoice_status || "keine",
-      billing_company: v.billing_company || null, billing_address: v.billing_address || null, billing_email: v.billing_email || null,
-      notes: v.notes || null,
-    }),
+    buildRow: (v, ctx) => {
+      const TIER_PRICES = { "300 € (Standard)": 300, "250 € (Rabatt)": 250, "200 € (Rabatt)": 200 };
+      const isCustom = v.price_tier === "Individuell";
+      const price = isCustom ? (v.custom_price ? Number(v.custom_price) : null) : (TIER_PRICES[v.price_tier] ?? 300);
+      return {
+        title: v.title, location: v.location || null, start_date: v.start_date, end_date: v.end_date || v.start_date,
+        logistics: v.logistics || "aufbau", status: v.status || "option", box_id: ctx.boxId,
+        media_packages: v.media_packages ? Number(v.media_packages) : 1, with_printer: !!v.with_printer,
+        price_net: price, custom_price: isCustom ? price : null,
+        setup_cost: v.setup_cost ? Number(v.setup_cost) : null, invoice_status: v.invoice_status || "keine",
+        billing_company: v.billing_company || null, billing_address: v.billing_address || null, billing_email: v.billing_email || null,
+        notes: v.notes || null,
+      };
+    },
   },
   // Vollständiger Felderumfang 1:1 aus der alten Hochzeiten-App übernommen.
   hochzeiten: {
@@ -247,8 +279,10 @@ export default function App() {
   const [fotoView, setFotoView] = useState(() => { try { return localStorage.getItem("zp-foto-view") || "liste"; } catch { return "liste"; } });
   const [groupBy, setGroupBy] = useState(() => { try { return localStorage.getItem("zp-foto-groupby") || "prio"; } catch { return "prio"; } });
   const [sortMode, setSortMode] = useState(false);
+  const [fotoDateSort, setFotoDateSort] = useState(false);
   const [grafikView, setGrafikView] = useState(() => { try { return localStorage.getItem("zp-grafik-view") || "liste"; } catch { return "liste"; } });
   const [grafikGroupBy, setGrafikGroupBy] = useState(() => { try { return localStorage.getItem("zp-grafik-groupby") || "prio"; } catch { return "prio"; } });
+  const [grafikDateSort, setGrafikDateSort] = useState(false);
   // Da sich Mitarbeiter keinen eigenen Zugang einloggen, kann sich jeder per
   // Klick auf seinen Namen die eigenen Jobs herausfiltern ("Meine Jobs").
   const [fotoPersonFilter, setFotoPersonFilter] = useState("Alle");
@@ -360,7 +394,10 @@ export default function App() {
   const upcomingWeddings = data.hochzeiten
     .filter(h => h.data?.hochzeitsDatum && h.data.hochzeitsDatum >= t)
     .sort((a, b) => a.data.hochzeitsDatum.localeCompare(b.data.hochzeitsDatum));
-  const openJobsAll = data.fotostudioJobs.filter(j => !["Abgeschlossen", "Archiviert", "Fertig"].includes(j.status));
+  // Grafik hat seit der erweiterten Status-Pipeline eigene Zwischenschritte
+  // nach "Abgeschlossen" (Freigegeben, Kann abgerechnet werden) - die bleiben
+  // bewusst in der offenen Liste sichtbar, bis der Job final archiviert wird.
+  const openJobsAll = data.fotostudioJobs.filter(j => j.bereich === "Grafik" ? j.status !== "Archiviert" : !["Abgeschlossen", "Archiviert"].includes(j.status));
   // Die alte Fotostudio-Jobliste führt Produktion (Foto/Video) und Grafik
   // (Nachbearbeitung) als einen gemeinsamen Datensatz, unterschieden durch
   // das Feld "bereich" - hier entsprechend gespiegelt.
@@ -375,12 +412,16 @@ export default function App() {
   };
   const matchesPerson = (job, person) => person === "Alle" || (Array.isArray(job.personen) && job.personen.includes(person));
   const visibleFotoJobs = openJobs.filter(j => matchesSearch(j, fotoSearch) && matchesPerson(j, fotoPersonFilter)).slice().sort((a, b) => {
+    if (fotoDateSort) return (a.date || "9999-99-99").localeCompare(b.date || "9999-99-99");
     if (a.sort_order == null && b.sort_order == null) return 0;
     if (a.sort_order == null) return 1;
     if (b.sort_order == null) return -1;
     return a.sort_order - b.sort_order;
   });
-  const visibleGrafikJobs = openJobsGrafik.filter(j => matchesSearch(j, grafikSearch) && matchesPerson(j, grafikPersonFilter));
+  const visibleGrafikJobs = openJobsGrafik.filter(j => matchesSearch(j, grafikSearch) && matchesPerson(j, grafikPersonFilter)).slice().sort((a, b) => {
+    if (!grafikDateSort) return 0;
+    return (a.abgabe || a.date || "9999-99-99").localeCompare(b.abgabe || b.date || "9999-99-99");
+  });
   const todaysFotoJobs = openJobsAll.filter(j => j.bereich !== "Grafik" && jobActiveOn(j, t));
   const upcomingBookings = data.bookings
     .filter(b => b.start_date >= t && b.status !== "storniert")
@@ -388,11 +429,54 @@ export default function App() {
 
   const metrics = { hochzeiten: upcomingWeddings.length, fotostudio: openJobs.length, fotobox: upcomingBookings.length, grafik: openJobsGrafik.length, messebau: null };
 
+  // Synct eine Hochzeits-Buchung mit dem Fotobox-Bereich: ist "Fotobox dabei"
+  // angehakt, wird automatisch eine (bzw. bei erneutem Speichern dieselbe,
+  // über fotoboxBookingId verknüpfte) Fotobox-Buchung für den Hochzeitstag
+  // angelegt/aktualisiert, damit der Tag dort ebenfalls geblockt ist. Wird
+  // das Häkchen wieder entfernt, wird die verknüpfte Buchung storniert statt
+  // gelöscht (Nachvollziehbarkeit). Gibt die (ggf. neue) fotoboxBookingId zurück.
+  const syncWeddingFotobox = async (row, prevBookingId) => {
+    const title = `${row.partner1 || "?"} & ${row.partner2 || ""} – Hochzeit`.trim();
+    const location = row.feierAdresse || row.trauungAdresse || row.adresse || null;
+    let bookingId = prevBookingId || null;
+
+    if (row.fotobox && row.hochzeitsDatum) {
+      if (bookingId) {
+        const { data: updated, error } = await supabase.from("fb_bookings")
+          .update({ title, location, start_date: row.hochzeitsDatum, end_date: row.hochzeitsDatum, status: "fest" })
+          .eq("id", bookingId).select().single();
+        if (!error) setData(p => ({ ...p, bookings: p.bookings.map(b => b.id === bookingId ? updated : b) }));
+      } else {
+        const { data: inserted, error } = await supabase.from("fb_bookings").insert([{
+          title, location, start_date: row.hochzeitsDatum, end_date: row.hochzeitsDatum,
+          logistics: "aufbau", status: "fest", box_id: data.boxes[0]?.id || null,
+          media_packages: 1, with_printer: true, price_net: null, custom_price: null, setup_cost: null,
+          invoice_status: "keine", notes: "Automatisch aus Hochzeiten-Buchung erstellt." + (row.fotoboxDetails ? ` ${row.fotoboxDetails}` : ""),
+        }]).select().single();
+        if (!error) {
+          bookingId = inserted.id;
+          setData(p => ({ ...p, bookings: [...p.bookings, inserted].sort((a, b) => a.start_date.localeCompare(b.start_date)) }));
+        }
+      }
+    } else if (!row.fotobox && bookingId) {
+      const { data: updated, error } = await supabase.from("fb_bookings").update({ status: "storniert" }).eq("id", bookingId).select().single();
+      if (!error) setData(p => ({ ...p, bookings: p.bookings.map(b => b.id === bookingId ? updated : b) }));
+    }
+    return bookingId;
+  };
+
   const handleInsert = async (bereichKey, row) => {
     const cfg = QUICK_ADD[bereichKey];
     const payload = bereichKey === "hochzeiten" ? { id: Date.now(), created_at: new Date().toISOString(), data: row } : row;
     const { data: inserted, error } = await supabase.from(cfg.table).insert([payload]).select().single();
     if (error) throw error;
+    if (bereichKey === "hochzeiten") {
+      const bookingId = await syncWeddingFotobox(row, null);
+      if (bookingId) {
+        const { data: patched } = await supabase.from("hz_hochzeiten").update({ data: { ...row, fotoboxBookingId: bookingId } }).eq("id", inserted.id).select().single();
+        if (patched) inserted.data = patched.data;
+      }
+    }
     setData(p => {
       if (bereichKey === "fotobox") return { ...p, bookings: [...p.bookings, inserted].sort((a, b) => a.start_date.localeCompare(b.start_date)) };
       if (bereichKey === "hochzeiten") return { ...p, hochzeiten: [...p.hochzeiten, inserted] };
@@ -407,6 +491,14 @@ export default function App() {
     const payload = bereichKey === "hochzeiten" ? { data: row } : row;
     const { data: updated, error } = await supabase.from(cfg.table).update(payload).eq("id", item.id).select().single();
     if (error) throw error;
+    if (bereichKey === "hochzeiten") {
+      const prevBookingId = item?.data?.fotoboxBookingId || null;
+      const bookingId = await syncWeddingFotobox(row, prevBookingId);
+      if (bookingId !== prevBookingId) {
+        const { data: patched } = await supabase.from("hz_hochzeiten").update({ data: { ...row, fotoboxBookingId: bookingId } }).eq("id", item.id).select().single();
+        if (patched) updated.data = patched.data;
+      }
+    }
     setData(p => {
       if (bereichKey === "fotobox") return { ...p, bookings: p.bookings.map(b => b.id === item.id ? updated : b).sort((a, b) => a.start_date.localeCompare(b.start_date)) };
       if (bereichKey === "hochzeiten") return { ...p, hochzeiten: p.hochzeiten.map(h => h.id === item.id ? updated : h) };
@@ -487,6 +579,53 @@ export default function App() {
     const { data: updated, error } = await supabase.from("js_jobs").update({ status: next }).eq("id", job.id).select(JOB_FIELDS).single();
     if (error) { console.error(error.message); return; }
     setData(p => ({ ...p, fotostudioJobs: p.fotostudioJobs.map(j => j.id === job.id ? updated : j) }));
+  };
+
+  // Kontextmenü (⋯) direkt in der Listenzeile - Duplizieren/Archivieren/Löschen,
+  // ohne dass man erst ins Projekt reinklicken muss. Funktioniert identisch für
+  // Foto/Video- und Grafik-Jobs, da beide in js_jobs liegen (bereich-Spalte).
+  const handleDuplicateJob = async ({ id, ...rest }) => {
+    const row = { ...rest, name: `${rest.name} (Kopie)`, status: "Neu", sort_order: null };
+    const { data: inserted, error } = await supabase.from("js_jobs").insert([row]).select(JOB_FIELDS).single();
+    if (error) { showToast("Duplizieren fehlgeschlagen: " + error.message, false); return; }
+    setData(p => ({ ...p, fotostudioJobs: [inserted, ...p.fotostudioJobs] }));
+    showToast(`Dupliziert: "${inserted.name}"`);
+  };
+
+  const handleArchiveJobRow = async (job) => {
+    const { data: updated, error } = await supabase.from("js_jobs").update({ status: "Archiviert" }).eq("id", job.id).select(JOB_FIELDS).single();
+    if (error) { showToast("Archivieren fehlgeschlagen: " + error.message, false); return; }
+    setData(p => ({ ...p, fotostudioJobs: p.fotostudioJobs.map(j => j.id === job.id ? updated : j) }));
+    if (job.bereich !== "Grafik") notifyMocoArchive(updated);
+    showToast(`Archiviert: "${job.name}"`);
+  };
+
+  // Übergibt eine abgeschlossene Hochzeit an Grafik/Nachbearbeitung: legt
+  // einen neuen Grafik-Job an und merkt sich die Verknüpfung in der
+  // Hochzeit (grafikJobId), damit der Button danach "Bereits übergeben" zeigt.
+  const handleHandoffToGrafik = async (hochzeitItem, person) => {
+    const h = hochzeitItem.data || {};
+    const name = joinName(`${h.partner1 || "?"} & ${h.partner2 || ""}`.trim(), "Hochzeit – Nachbearbeitung");
+    const row = {
+      name, status: "Neu", bereich: "Grafik", auftragsart: "Bildbearbeitung", speicherort: null,
+      personen: person ? [person] : [], person: person || "",
+      date: h.hochzeitsDatum || null, kontakt: h.email || h.telefon || "",
+      notizen: `Automatisch aus Hochzeit übergeben.${h.notizen ? "\n" + h.notizen : ""}`,
+    };
+    const { data: inserted, error } = await supabase.from("js_jobs").insert([row]).select(JOB_FIELDS).single();
+    if (error) { showToast("Übergabe fehlgeschlagen: " + error.message, false); return; }
+    setData(p => ({ ...p, fotostudioJobs: [inserted, ...p.fotostudioJobs] }));
+    const { data: patched } = await supabase.from("hz_hochzeiten").update({ data: { ...h, grafikJobId: inserted.id } }).eq("id", hochzeitItem.id).select().single();
+    if (patched) setData(p => ({ ...p, hochzeiten: p.hochzeiten.map(x => x.id === hochzeitItem.id ? patched : x) }));
+    showToast(`An Grafik übergeben: "${inserted.name}"`);
+  };
+
+  const handleDeleteJobRow = async (job) => {
+    if (!window.confirm(`"${job.name}" wirklich endgültig löschen? Das kann nicht rückgängig gemacht werden.`)) return;
+    const { error } = await supabase.from("js_jobs").delete().eq("id", job.id);
+    if (error) { showToast("Löschen fehlgeschlagen: " + error.message, false); return; }
+    setData(p => ({ ...p, fotostudioJobs: p.fotostudioJobs.filter(j => j.id !== job.id) }));
+    showToast(`Gelöscht: "${job.name}"`);
   };
 
   // Setzt das Shooting-Datum eines Jobs auf heute - wird vom "Heute"-Ablagefeld
@@ -631,6 +770,12 @@ export default function App() {
               </div>
             )}
             {fotoView === "liste" && (
+              <div onClick={() => { setFotoDateSort(d => !d); setSortMode(false); }}
+                style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 13px", borderRadius: 8, cursor: "pointer", fontSize: 12.5, fontWeight: 700, background: fotoDateSort ? Z.gold : Z.panelAlt, color: fotoDateSort ? "#1A1A1A" : Z.textSoft }}>
+                <i className="ti ti-calendar-time" style={{ fontSize: 14 }}></i>{fotoDateSort ? "Nach Datum ✓" : "Nach Datum sortieren"}
+              </div>
+            )}
+            {fotoView === "liste" && !fotoDateSort && (
               <div onClick={() => { setSortMode(s => { const next = !s; if (next) showToast("Sortier-Modus an – Jobs per Ziehen neu anordnen"); return next; }); }}
                 style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 13px", borderRadius: 8, cursor: "pointer", fontSize: 12.5, fontWeight: 700, background: sortMode ? Z.gold : Z.panelAlt, color: sortMode ? "#1A1A1A" : Z.textSoft }}>
                 <i className="ti ti-arrows-sort" style={{ fontSize: 14 }}></i>{sortMode ? "Fertig" : "Sortierung bearbeiten"}
@@ -647,7 +792,8 @@ export default function App() {
           {fotoView === "liste" && (
             <ListPreview title="Offene Jobs" empty={fotoSearch ? "Keine Treffer für diese Suche." : "Keine offenen Jobs."} accent={BEREICH_BY_KEY.fotostudio.accent}>
               {visibleFotoJobs.map(j => (
-                <JobRow key={j.id} job={j} onOpen={() => setJobModal({ mode: "edit", job: j })} onAdvance={() => handleStatusAdvance(j)} sortMode={sortMode} onReorder={handleDragReorder} />
+                <JobRow key={j.id} job={j} onOpen={() => setJobModal({ mode: "edit", job: j })} onAdvance={() => handleStatusAdvance(j)} sortMode={sortMode} onReorder={handleDragReorder}
+                  onDuplicate={handleDuplicateJob} onArchive={handleArchiveJobRow} onDelete={handleDeleteJobRow} />
               ))}
             </ListPreview>
           )}
@@ -689,6 +835,12 @@ export default function App() {
                 ))}
               </div>
             )}
+            {grafikView === "liste" && (
+              <div onClick={() => setGrafikDateSort(d => !d)}
+                style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 13px", borderRadius: 8, cursor: "pointer", fontSize: 12.5, fontWeight: 700, background: grafikDateSort ? Z.gold : Z.panelAlt, color: grafikDateSort ? "#1A1A1A" : Z.textSoft }}>
+                <i className="ti ti-calendar-time" style={{ fontSize: 14 }}></i>{grafikDateSort ? "Nach Datum ✓" : "Nach Datum sortieren"}
+              </div>
+            )}
           </div>
 
           {grafikView === "board" ? (
@@ -696,7 +848,8 @@ export default function App() {
           ) : (
             <ListPreview title="Offene Grafik-Jobs" empty={grafikSearch ? "Keine Treffer für diese Suche." : "Keine offenen Jobs."} accent={BEREICH_BY_KEY.grafik.accent}>
               {visibleGrafikJobs.map(j => (
-                <GrafikJobRow key={j.id} job={j} onOpen={() => setGrafikJobModal({ mode: "edit", job: j })} onAdvance={() => handleGrafikStatusAdvance(j)} />
+                <GrafikJobRow key={j.id} job={j} onOpen={() => setGrafikJobModal({ mode: "edit", job: j })} onAdvance={() => handleGrafikStatusAdvance(j)}
+                  onDuplicate={handleDuplicateJob} onArchive={handleArchiveJobRow} onDelete={handleDeleteJobRow} />
               ))}
             </ListPreview>
           )}
@@ -735,13 +888,14 @@ export default function App() {
       )}
 
       {quickAddTarget && (
-        <QuickAddModal bereichKey={quickAddTarget} bereich={BEREICH_BY_KEY[quickAddTarget]} boxId={data.boxes[0]?.id} item={quickEditItem}
+        <QuickAddModal bereichKey={quickAddTarget} bereich={BEREICH_BY_KEY[quickAddTarget]} boxId={data.boxes[0]?.id} item={quickEditItem} team={team}
           onClose={() => { setQuickAddTarget(null); setQuickEditItem(null); }}
           onSubmit={async (row) => {
             if (quickEditItem) await handleUpdateQuickAdd(quickAddTarget, quickEditItem, row);
             else await handleInsert(quickAddTarget, row);
             setQuickAddTarget(null); setQuickEditItem(null);
-          }} />
+          }}
+          onHandoffToGrafik={async person => { await handleHandoffToGrafik(quickEditItem, person); setQuickAddTarget(null); setQuickEditItem(null); }} />
       )}
 
       {jobModal && (
@@ -1503,11 +1657,49 @@ function EquipmentView({ jobs, onJobClick }) {
   );
 }
 
+// ─── Kontextmenü (⋯) für Listenzeilen ──────────────────────────────────────
+// Duplizieren/Archivieren/Löschen direkt in der Übersicht, ohne erst ins
+// Projekt reinklicken zu müssen. Bereich-unabhängig (Foto/Video & Grafik).
+function RowMenu({ onDuplicate, onArchive, onDelete, archived }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const handler = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+  const itemStyle = { padding: "10px 13px", display: "flex", alignItems: "center", gap: 9, cursor: "pointer", fontSize: 13, fontWeight: 600 };
+  return (
+    <div ref={ref} style={{ position: "relative", flexShrink: 0 }} onClick={e => e.stopPropagation()}>
+      <div onClick={() => setOpen(o => !o)} title="Weitere Aktionen"
+        style={{ width: 26, height: 26, borderRadius: 7, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: Z.textSoft }}>
+        <i className="ti ti-dots" style={{ fontSize: 17 }}></i>
+      </div>
+      {open && (
+        <div style={{ position: "absolute", top: 30, right: 0, background: Z.panel, border: `1px solid ${Z.border}`, borderRadius: 10, overflow: "hidden", zIndex: 30, minWidth: 180, boxShadow: "0 10px 30px rgba(0,0,0,0.5)" }}>
+          <div onClick={() => { setOpen(false); onDuplicate(); }} style={itemStyle}>
+            <i className="ti ti-copy" style={{ fontSize: 15, color: Z.textSoft }}></i>Duplizieren
+          </div>
+          {!archived && (
+            <div onClick={() => { setOpen(false); onArchive(); }} style={{ ...itemStyle, borderTop: `1px solid ${Z.borderSoft}` }}>
+              <i className="ti ti-archive" style={{ fontSize: 15, color: Z.textSoft }}></i>Archivieren
+            </div>
+          )}
+          <div onClick={() => { setOpen(false); onDelete(); }} style={{ ...itemStyle, borderTop: `1px solid ${Z.borderSoft}`, color: Z.danger }}>
+            <i className="ti ti-trash" style={{ fontSize: 15, color: Z.danger }}></i>Löschen
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Job-Zeile Grafik/Nachbearbeitung ──────────────────────────────────────
 // Schlanker als die Foto/Video-Zeile: zeigt auf einen Blick Auftragsart,
 // Anzahl Fotos/Videos und Zuständigkeit - die Infos, die ein Grafik-
 // Mitarbeiter morgens als Erstes braucht.
-function GrafikJobRow({ job, onOpen, onAdvance }) {
+function GrafikJobRow({ job, onOpen, onAdvance, onDuplicate, onArchive, onDelete }) {
   const statusColor = GRAFIK_STATUS_CFG[job.status]?.color || Z.textSoft;
   const personen = Array.isArray(job.personen) ? job.personen : [];
   const mediaBits = [];
@@ -1539,6 +1731,8 @@ function GrafikJobRow({ job, onOpen, onAdvance }) {
           {job.abgabe ? "AB " + fmtDate(job.abgabe) : fmtDate(job.date)}
         </div>
       )}
+      <RowMenu archived={job.status === "Archiviert"}
+        onDuplicate={() => onDuplicate(job)} onArchive={() => onArchive(job)} onDelete={() => onDelete(job)} />
     </div>
   );
 }
@@ -1546,7 +1740,7 @@ function GrafikJobRow({ job, onOpen, onAdvance }) {
 // ─── Job-Zeile Foto-/Videoproduktion ───────────────────────────────────────
 // Klick auf die Zeile öffnet die Detailansicht, Klick auf den Status-Pill
 // schaltet den Status direkt weiter (häufigster Alltags-Workflow).
-function JobRow({ job, onOpen, onAdvance, sortMode, onReorder }) {
+function JobRow({ job, onOpen, onAdvance, sortMode, onReorder, onDuplicate, onArchive, onDelete }) {
   const statusColor = STATUS_CFG[job.status]?.color || Z.textSoft;
   const kategorien = Array.isArray(job.kategorien) ? job.kategorien : [];
   const personen = Array.isArray(job.personen) ? job.personen : [];
@@ -1585,6 +1779,8 @@ function JobRow({ job, onOpen, onAdvance, sortMode, onReorder }) {
           {job.date_end && job.date_end !== job.date && <div style={{ fontWeight: 500 }}>bis {fmtDate(job.date_end)}</div>}
         </div>
       )}
+      <RowMenu archived={job.status === "Archiviert"}
+        onDuplicate={() => onDuplicate(job)} onArchive={() => onArchive(job)} onDelete={() => onDelete(job)} />
     </div>
   );
 }
@@ -1641,7 +1837,7 @@ function PasswordGate({ endpoint, storageKey, accent, title, text, onUnlock }) {
 // Dient zugleich als Neuanlage- UND Bearbeiten-Dialog für Fotobox-Buchungen
 // und Hochzeiten (volles Formular statt nur Schnelleingabe): wird ein "item"
 // übergeben, ist es ein Bearbeiten-Vorgang (Update statt Insert).
-function QuickAddModal({ bereichKey, bereich, boxId, item, onClose, onSubmit }) {
+function QuickAddModal({ bereichKey, bereich, boxId, item, team, onClose, onSubmit, onHandoffToGrafik }) {
   const cfg = QUICK_ADD[bereichKey];
   const isEdit = !!item;
   // Hochzeiten speichern alle Felder in der jsonb-Spalte "data", Fotobox-
@@ -1650,7 +1846,7 @@ function QuickAddModal({ bereichKey, bereich, boxId, item, onClose, onSubmit }) 
   const [values, setValues] = useState(() => {
     const init = {};
     (cfg?.fields || []).forEach(f => {
-      const v = source[f.key];
+      const v = f.deriveValue ? f.deriveValue(source) : source[f.key];
       init[f.key] = v !== undefined && v !== null ? v : (f.type === "checkbox" ? !!f.default : (f.default ?? ""));
     });
     return init;
@@ -1658,6 +1854,60 @@ function QuickAddModal({ bereichKey, bereich, boxId, item, onClose, onSubmit }) 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const set = (k, v) => setValues(p => ({ ...p, [k]: v }));
+
+  // Fotobox: Aufbaukosten anhand der eingetragenen Ortsangabe vorschlagen
+  // (api/fotobox-distance.js, Luftlinie ab Studio-Adresse) - Vorschlag bleibt
+  // im Feld "Aufbaukosten" danach frei editierbar.
+  const [distanceBusy, setDistanceBusy] = useState(false);
+  const [distanceInfo, setDistanceInfo] = useState(null);
+  const [distanceError, setDistanceError] = useState("");
+  const calcSetupCost = async () => {
+    if (!values.location) { setDistanceError("Bitte zuerst den Ort eintragen."); return; }
+    setDistanceBusy(true); setDistanceError(""); setDistanceInfo(null);
+    try {
+      const res = await fetch("/api/fotobox-distance", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ address: values.location }),
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || "Berechnung fehlgeschlagen");
+      setDistanceInfo(result);
+      set("setup_cost", result.cost);
+    } catch (e) {
+      setDistanceError(e.message);
+    }
+    setDistanceBusy(false);
+  };
+
+  // Fotobox: Rechnung in Moco anlegen (api/fotobox-create-invoice.js) -
+  // anhand der im Formular hinterlegten Preis-/Rechnungsadressdaten.
+  const [invoiceBusy, setInvoiceBusy] = useState(false);
+  const [invoiceMsg, setInvoiceMsg] = useState("");
+  const createInvoice = async () => {
+    setInvoiceBusy(true); setInvoiceMsg("");
+    try {
+      const row = cfg.buildRow(values, { boxId });
+      const res = await fetch("/api/fotobox-create-invoice", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ booking: row }),
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || "Rechnung erstellen fehlgeschlagen");
+      setInvoiceMsg(`✓ Moco-Rechnung erstellt${result.invoiceNumber ? " (" + result.invoiceNumber + ")" : ""}`);
+      set("invoice_status", "gestellt");
+    } catch (e) {
+      setInvoiceMsg("✗ " + e.message);
+    }
+    setInvoiceBusy(false);
+  };
+
+  // Hochzeiten: abgeschlossene Hochzeit per Button an Grafik/Nachbearbeitung
+  // übergeben (legt dort automatisch einen Job an und weist ihn zu).
+  const [handoffPerson, setHandoffPerson] = useState("");
+  const [handoffBusy, setHandoffBusy] = useState(false);
+  const alreadyHandedOff = bereichKey === "hochzeiten" && !!source.grafikJobId;
+  const doHandoff = async () => {
+    setHandoffBusy(true);
+    try { await onHandoffToGrafik(handoffPerson); } finally { setHandoffBusy(false); }
+  };
 
   if (!cfg) {
     return (
@@ -1712,9 +1962,22 @@ function QuickAddModal({ bereichKey, bereich, boxId, item, onClose, onSubmit }) 
                   {sec.name}
                 </div>
               )}
-              {sec.fields.map(f => (
+              {sec.fields.filter(f => !f.showIf || f.showIf(values)).map(f => (
                 <div key={f.key}>
-                  {f.type === "checkbox" ? (
+                  {f.type === "distance-helper" ? (
+                    <div>
+                      <div onClick={calcSetupCost}
+                        style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 13px", borderRadius: 8, background: Z.panelAlt, border: `1px solid ${Z.border}`, cursor: distanceBusy ? "wait" : "pointer", fontSize: 12.5, fontWeight: 700, color: Z.gold }}>
+                        <i className="ti ti-route" style={{ fontSize: 14 }}></i>{distanceBusy ? "Berechne…" : "Aufbaukosten anhand Ort berechnen"}
+                      </div>
+                      {distanceInfo && (
+                        <div style={{ fontSize: 11.5, color: Z.textSoft, marginTop: 6 }}>
+                          ≈ {distanceInfo.distanceKm} km ab Studio → {distanceInfo.cost} € vorgeschlagen (unten anpassbar)
+                        </div>
+                      )}
+                      {distanceError && <div style={{ fontSize: 11.5, color: Z.danger, marginTop: 6 }}>{distanceError}</div>}
+                    </div>
+                  ) : f.type === "checkbox" ? (
                     <div onClick={() => set(f.key, !values[f.key])} style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
                       <div style={{ width: 20, height: 20, borderRadius: 5, border: `1.5px solid ${values[f.key] ? Z.gold : Z.border}`, background: values[f.key] ? Z.gold : "transparent", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                         {values[f.key] && <i className="ti ti-check" style={{ fontSize: 13, color: "#1A1A1A", fontWeight: 900 }}></i>}
@@ -1746,6 +2009,36 @@ function QuickAddModal({ bereichKey, bereich, boxId, item, onClose, onSubmit }) 
           ))}
           {error && <div style={{ color: Z.danger, fontSize: 12.5 }}>{error}</div>}
         </div>
+        {bereichKey === "fotobox" && isEdit && (
+          <div style={{ padding: "0 18px 13px", flexShrink: 0 }}>
+            <div onClick={createInvoice}
+              style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 7, padding: 11, borderRadius: 9, border: `1.5px solid ${Z.gold}`, cursor: invoiceBusy ? "wait" : "pointer", fontSize: 13, fontWeight: 700, color: Z.gold }}>
+              <i className="ti ti-file-invoice" style={{ fontSize: 15 }}></i>{invoiceBusy ? "Erstellt Rechnung…" : "Rechnung in Moco erstellen"}
+            </div>
+            {invoiceMsg && <div style={{ fontSize: 12, color: invoiceMsg.startsWith("✓") ? "#4ADE80" : Z.danger, marginTop: 7, textAlign: "center" }}>{invoiceMsg}</div>}
+          </div>
+        )}
+        {bereichKey === "hochzeiten" && isEdit && values.status === "Abgeschlossen" && (
+          <div style={{ padding: "0 18px 13px", flexShrink: 0 }}>
+            {alreadyHandedOff ? (
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 7, padding: 11, borderRadius: 9, border: `1.5px solid ${Z.border}`, fontSize: 13, fontWeight: 600, color: Z.textSoft }}>
+                <i className="ti ti-circle-check" style={{ fontSize: 15, color: "#4ADE80" }}></i>Bereits an Grafik übergeben
+              </div>
+            ) : (
+              <div style={{ display: "flex", gap: 8 }}>
+                <select value={handoffPerson} onChange={e => setHandoffPerson(e.target.value)}
+                  style={{ flex: 1, padding: "9px 11px", borderRadius: 9, border: `1.5px solid ${Z.border}`, background: Z.panelAlt, color: Z.text, fontSize: 13.5 }}>
+                  <option value="">Person wählen…</option>
+                  {(team || []).map(t => <option key={t} value={t}>{t}</option>)}
+                </select>
+                <div onClick={doHandoff}
+                  style={{ display: "flex", alignItems: "center", gap: 7, padding: "9px 14px", borderRadius: 9, border: `1.5px solid ${BEREICH_BY_KEY.grafik.accent}`, cursor: handoffBusy ? "wait" : "pointer", fontSize: 13, fontWeight: 700, color: BEREICH_BY_KEY.grafik.accent, whiteSpace: "nowrap" }}>
+                  <i className="ti ti-arrow-forward-up" style={{ fontSize: 15 }}></i>{handoffBusy ? "…" : "An Grafik übergeben"}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
         <div style={{ padding: "13px 18px", borderTop: `1px solid ${Z.border}`, display: "flex", gap: 10, flexShrink: 0 }}>
           <div onClick={onClose} style={{ flex: 1, padding: 12, borderRadius: 9, border: `1.5px solid ${Z.border}`, textAlign: "center", cursor: "pointer", fontSize: 14, fontWeight: 600, color: Z.textSoft }}>Abbrechen</div>
           <div onClick={handleSubmit} style={{ flex: 2, padding: 12, borderRadius: 9, background: Z.gold, color: "#1A1A1A", textAlign: "center", cursor: busy ? "wait" : "pointer", fontSize: 14, fontWeight: 700 }}>
@@ -1824,6 +2117,72 @@ function ChatPanel({ context, onAction, compact }) {
 
 function FieldLabel({ children }) {
   return <div style={{ fontSize: 11, fontWeight: 700, color: Z.textSoft, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 6 }}>{children}</div>;
+}
+
+// ─── Verlauf / Status-Updates pro Projekt ──────────────────────────────────
+// Kleiner Chat-artiger Feed (Tabelle js_job_comments), damit Team-Mitglieder
+// Bearbeitungsstand, Abwesenheiten, Kundenrückmeldungen etc. festhalten
+// können - wichtig, da sich alle einen gemeinsamen Zugang teilen und sonst
+// niemand weiß, wie weit ein Kollege mit einem Job schon ist.
+function JobCommentsFeed({ jobId, team }) {
+  const [comments, setComments] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [text, setText] = useState("");
+  const [author, setAuthor] = useState(() => { try { return localStorage.getItem("zp-current-person") || ""; } catch { return ""; } });
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    supabase.from("js_job_comments").select("*").eq("job_id", jobId).order("created_at", { ascending: true })
+      .then(({ data }) => { if (active) { setComments(data || []); setLoading(false); } });
+    return () => { active = false; };
+  }, [jobId]);
+
+  const send = async () => {
+    const t = text.trim();
+    if (!t || busy) return;
+    setBusy(true);
+    try { localStorage.setItem("zp-current-person", author || ""); } catch {}
+    const { data: inserted, error } = await supabase.from("js_job_comments").insert([{ job_id: jobId, author: author || null, text: t }]).select().single();
+    if (!error) { setComments(c => [...c, inserted]); setText(""); }
+    setBusy(false);
+  };
+
+  return (
+    <div>
+      <FieldLabel>Verlauf / Status-Updates</FieldLabel>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 220, overflowY: "auto", marginBottom: 10 }}>
+        {loading ? (
+          <div style={{ fontSize: 12.5, color: Z.textFaint }}>Lädt…</div>
+        ) : comments.length === 0 ? (
+          <div style={{ fontSize: 12.5, color: Z.textFaint }}>Noch keine Einträge.</div>
+        ) : comments.map(c => (
+          <div key={c.id} style={{ background: Z.panelAlt, border: `1px solid ${Z.borderSoft}`, borderRadius: 9, padding: "8px 11px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginBottom: 3 }}>
+              <span style={{ fontSize: 11.5, fontWeight: 700, color: Z.gold }}>{c.author || "Unbekannt"}</span>
+              <span style={{ fontSize: 10.5, color: Z.textFaint }}>
+                {new Date(c.created_at).toLocaleString("de-DE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
+              </span>
+            </div>
+            <div style={{ fontSize: 13, whiteSpace: "pre-wrap" }}>{c.text}</div>
+          </div>
+        ))}
+      </div>
+      <div style={{ display: "flex", gap: 8 }}>
+        <select value={author} onChange={e => setAuthor(e.target.value)}
+          style={{ width: 118, padding: "9px 8px", borderRadius: 9, border: `1.5px solid ${Z.border}`, background: Z.panelAlt, color: Z.text, fontSize: 12.5, flexShrink: 0 }}>
+          <option value="">Ich bin…</option>
+          {(team || []).map(t => <option key={t} value={t}>{t}</option>)}
+        </select>
+        <input type="text" value={text} onChange={e => setText(e.target.value)} placeholder="Status-Update eintragen…"
+          onKeyDown={e => e.key === "Enter" && send()}
+          style={{ flex: 1, padding: "9px 11px", borderRadius: 9, border: `1.5px solid ${Z.border}`, background: Z.panelAlt, color: Z.text, fontSize: 13, minWidth: 0 }} />
+        <div onClick={send} style={{ padding: "9px 14px", borderRadius: 9, background: Z.gold, color: "#1A1A1A", display: "flex", alignItems: "center", cursor: busy ? "wait" : "pointer", fontSize: 13, fontWeight: 700, flexShrink: 0 }}>
+          <i className="ti ti-send" style={{ fontSize: 14 }}></i>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function ChipSelect({ options, selected, onToggle, accent = Z.gold }) {
@@ -2240,6 +2599,8 @@ function JobFormModal({ mode, job, team, onAiAction, onChatJobsCreated, onClose,
             </label>
           </div>
 
+          {mode === "edit" && job?.id && <JobCommentsFeed jobId={job.id} team={team} />}
+
           {error && <div style={{ color: Z.danger, fontSize: 12.5 }}>{error}</div>}
         </div>
         <div style={{ padding: "13px 18px", borderTop: `1px solid ${Z.border}`, display: "flex", gap: 10, flexShrink: 0 }}>
@@ -2465,6 +2826,8 @@ function GrafikJobFormModal({ mode, job, team, onChatJobsCreated, onClose, onSub
               <input type="file" accept="image/*,application/pdf" multiple onChange={handleAttachmentSelect} disabled={uploadingAttachments} style={{ display: "none" }} />
             </label>
           </div>
+
+          {mode === "edit" && job?.id && <JobCommentsFeed jobId={job.id} team={team} />}
 
           {error && <div style={{ color: Z.danger, fontSize: 12.5 }}>{error}</div>}
         </div>
