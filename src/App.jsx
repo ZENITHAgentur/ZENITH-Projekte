@@ -628,6 +628,43 @@ export default function App() {
     showToast(`Gelöscht: "${job.name}"`);
   };
 
+  // Duplizieren/Löschen für Fotobox-Buchungen und Hochzeiten - dieselbe
+  // Funktion wie beim ⋯-Menü von Foto/Video & Grafik, nur auf den jeweils
+  // eigenen Tabellen (fb_bookings bzw. hz_hochzeiten mit jsonb-"data"-Spalte).
+  const handleDuplicateBooking = async ({ id, ...rest }) => {
+    const row = { ...rest, title: `${rest.title} (Kopie)` };
+    const { data: inserted, error } = await supabase.from("fb_bookings").insert([row]).select().single();
+    if (error) { showToast("Duplizieren fehlgeschlagen: " + error.message, false); return; }
+    setData(p => ({ ...p, bookings: [...p.bookings, inserted].sort((a, b) => a.start_date.localeCompare(b.start_date)) }));
+    showToast(`Dupliziert: "${inserted.title}"`);
+  };
+
+  const handleDeleteBooking = async (booking) => {
+    if (!window.confirm(`"${booking.title}" wirklich endgültig löschen? Das kann nicht rückgängig gemacht werden.`)) return;
+    const { error } = await supabase.from("fb_bookings").delete().eq("id", booking.id);
+    if (error) { showToast("Löschen fehlgeschlagen: " + error.message, false); return; }
+    setData(p => ({ ...p, bookings: p.bookings.filter(b => b.id !== booking.id) }));
+    showToast(`Gelöscht: "${booking.title}"`);
+  };
+
+  const handleDuplicateWedding = async (item) => {
+    const h = item.data || {};
+    const row = { id: Date.now(), created_at: new Date().toISOString(), data: { ...h, partner1: `${h.partner1 || ""} (Kopie)`.trim() } };
+    const { data: inserted, error } = await supabase.from("hz_hochzeiten").insert([row]).select().single();
+    if (error) { showToast("Duplizieren fehlgeschlagen: " + error.message, false); return; }
+    setData(p => ({ ...p, hochzeiten: [...p.hochzeiten, inserted] }));
+    showToast(`Dupliziert: "${inserted.data.partner1} & ${inserted.data.partner2 || ""}"`);
+  };
+
+  const handleDeleteWedding = async (item) => {
+    const h = item.data || {};
+    if (!window.confirm(`"${h.partner1 || "?"} & ${h.partner2 || "?"}" wirklich endgültig löschen? Das kann nicht rückgängig gemacht werden.`)) return;
+    const { error } = await supabase.from("hz_hochzeiten").delete().eq("id", item.id);
+    if (error) { showToast("Löschen fehlgeschlagen: " + error.message, false); return; }
+    setData(p => ({ ...p, hochzeiten: p.hochzeiten.filter(x => x.id !== item.id) }));
+    showToast("Hochzeit gelöscht");
+  };
+
   // Setzt das Shooting-Datum eines Jobs auf heute - wird vom "Heute"-Ablagefeld
   // (Drag & Drop aus der Liste, siehe TodayPanel) aufgerufen.
   const handleScheduleToday = async (jobId) => {
@@ -801,14 +838,16 @@ export default function App() {
         {view === "fotobox" && <BereichPage bereich={BEREICH_BY_KEY.fotobox} loading={loading} onAdd={() => { setQuickEditItem(null); setQuickAddTarget("fotobox"); }}>
           <ListPreview title="Anstehende Buchungen" empty="Keine anstehenden Buchungen." accent={BEREICH_BY_KEY.fotobox.accent}>
             {upcomingBookings.map(b => (
-              <PreviewRow key={b.id} title={b.title} sub={b.location || ""} right={fmtDate(b.start_date)} onClick={() => { setQuickAddTarget("fotobox"); setQuickEditItem(b); }} />
+              <PreviewRow key={b.id} title={b.title} sub={b.location || ""} right={fmtDate(b.start_date)} onClick={() => { setQuickAddTarget("fotobox"); setQuickEditItem(b); }}
+                onDuplicate={() => handleDuplicateBooking(b)} onDelete={() => handleDeleteBooking(b)} />
             ))}
           </ListPreview>
         </BereichPage>}
         {view === "hochzeiten" && weddingUnlocked && <BereichPage bereich={BEREICH_BY_KEY.hochzeiten} loading={loading} onAdd={() => { setQuickEditItem(null); setQuickAddTarget("hochzeiten"); }}>
           <ListPreview title="Anstehende Hochzeiten" empty="Keine anstehenden Hochzeiten." accent={BEREICH_BY_KEY.hochzeiten.accent}>
             {upcomingWeddings.map(h => (
-              <PreviewRow key={h.id} title={`${h.data.partner1 || "?"} & ${h.data.partner2 || "?"}`} sub={h.data.feierAdresse || h.data.trauungAdresse || ""} right={fmtDate(h.data.hochzeitsDatum)} onClick={() => { setQuickAddTarget("hochzeiten"); setQuickEditItem(h); }} />
+              <PreviewRow key={h.id} title={`${h.data.partner1 || "?"} & ${h.data.partner2 || "?"}`} sub={h.data.feierAdresse || h.data.trauungAdresse || ""} right={fmtDate(h.data.hochzeitsDatum)} onClick={() => { setQuickAddTarget("hochzeiten"); setQuickEditItem(h); }}
+                onDuplicate={() => handleDuplicateWedding(h)} onDelete={() => handleDeleteWedding(h)} />
             ))}
           </ListPreview>
         </BereichPage>}
@@ -1093,7 +1132,7 @@ function ListPreview({ title, empty, children, accent = Z.gold }) {
   );
 }
 
-function PreviewRow({ title, sub, right, onClick }) {
+function PreviewRow({ title, sub, right, onClick, onDuplicate, onDelete }) {
   return (
     <div onClick={onClick} style={{ padding: "11px 16px", borderBottom: `1px solid ${Z.borderSoft}`, display: "flex", alignItems: "center", gap: 10, cursor: onClick ? "pointer" : "default" }}>
       <div style={{ flex: 1, minWidth: 0 }}>
@@ -1101,6 +1140,7 @@ function PreviewRow({ title, sub, right, onClick }) {
         {sub && <div style={{ fontSize: 11.5, color: Z.textSoft, marginTop: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{sub}</div>}
       </div>
       {right && <div style={{ fontSize: 11.5, fontWeight: 700, color: Z.textSoft, flexShrink: 0 }}>{right}</div>}
+      {onDuplicate && onDelete && <RowMenu onDuplicate={onDuplicate} onDelete={onDelete} />}
     </div>
   );
 }
@@ -1681,7 +1721,7 @@ function RowMenu({ onDuplicate, onArchive, onDelete, archived }) {
           <div onClick={() => { setOpen(false); onDuplicate(); }} style={itemStyle}>
             <i className="ti ti-copy" style={{ fontSize: 15, color: Z.textSoft }}></i>Duplizieren
           </div>
-          {!archived && (
+          {onArchive && !archived && (
             <div onClick={() => { setOpen(false); onArchive(); }} style={{ ...itemStyle, borderTop: `1px solid ${Z.borderSoft}` }}>
               <i className="ti ti-archive" style={{ fontSize: 15, color: Z.textSoft }}></i>Archivieren
             </div>
