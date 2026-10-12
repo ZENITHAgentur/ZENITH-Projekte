@@ -1865,8 +1865,8 @@ function QuickAddModal({ bereichKey, bereich, boxId, item, team, onClose, onSubm
     if (!values.location) { setDistanceError("Bitte zuerst den Ort eintragen."); return; }
     setDistanceBusy(true); setDistanceError(""); setDistanceInfo(null);
     try {
-      const res = await fetch("/api/fotobox-distance", {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ address: values.location }),
+      const res = await fetch("/api/fotobox", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "distance", address: values.location }),
       });
       const result = await res.json();
       if (!res.ok) throw new Error(result.error || "Berechnung fehlgeschlagen");
@@ -1878,7 +1878,7 @@ function QuickAddModal({ bereichKey, bereich, boxId, item, team, onClose, onSubm
     setDistanceBusy(false);
   };
 
-  // Fotobox: Rechnung in Moco anlegen (api/fotobox-create-invoice.js) -
+  // Fotobox: Rechnung in Moco anlegen (api/fotobox.js, action "invoice") -
   // anhand der im Formular hinterlegten Preis-/Rechnungsadressdaten.
   const [invoiceBusy, setInvoiceBusy] = useState(false);
   const [invoiceMsg, setInvoiceMsg] = useState("");
@@ -1886,8 +1886,8 @@ function QuickAddModal({ bereichKey, bereich, boxId, item, team, onClose, onSubm
     setInvoiceBusy(true); setInvoiceMsg("");
     try {
       const row = cfg.buildRow(values, { boxId });
-      const res = await fetch("/api/fotobox-create-invoice", {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ booking: row }),
+      const res = await fetch("/api/fotobox", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "invoice", booking: row }),
       });
       const result = await res.json();
       if (!res.ok) throw new Error(result.error || "Rechnung erstellen fehlgeschlagen");
