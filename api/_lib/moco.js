@@ -62,15 +62,36 @@ export async function mocoCreateProject({ name, customerId, leaderId, currency =
 // passende Firma, ermittelt den Verantwortlichen und legt das Projekt an.
 // Gibt {matched:false, searchTerm} zurück, wenn keine Firma gefunden wurde -
 // das ist kein Fehler, sondern ein normaler Fall (noch kein Moco-Kunde).
+
+function fmtDateDE(dateStr) {
+  if (!dateStr) return "";
+  const [y, m, d] = dateStr.split("-");
+  return `${d}.${m}.${y}`;
+}
+
+// Feste Leistungsbeschreibung, 1:1 aus einer echten Fotobox-Rechnung
+// (R260123) übernommen - erscheint als separater Text-Posten unter der
+// eigentlichen Position, genau wie im Vorlagen-Layout.
+const FOTOBOX_LEISTUNGEN = [
+  "Fotobox mit digitaler Spiegelreflex-Kamera (DSLR)",
+  "Professioneller Superblitz für eine optimale Belichtung",
+  "400 Fotoausdrucken 10 x 15 cm",
+  "Bedienungsfreundlicher Fotodrucker",
+  "Online-Galerie mit allen Fotos nach der Veranstaltung",
+];
+
 // Legt eine Rechnung in Moco für eine Fotobox-Buchung an (Button "Rechnung
-// in Moco erstellen" im Fotobox-Formular). Sucht die Firma über
-// billing_company (Fallback: Titel), ein Posten für den Fotobox-Preis sowie
-// - falls vorhanden - einen zweiten Posten für die Aufbaukosten.
+// in Moco erstellen" im Fotobox-Formular), nach dem Vorbild der echten
+// Rechnung R260123 ("Rechnung für die Miete der Fotobox"): eine
+// Sammelposition "Fotobox mit Auf-/Abbau" (Box-Preis + Aufbaukosten
+// zusammen) plus ein Text-Posten darunter mit Datum/Ort und der festen
+// Leistungsbeschreibung.
 // Hinweis: Feldnamen der Moco-Rechnungs-API (items/recipient_address/...)
-// sind nach bestem Wissen aus der bestehenden Moco-Anbindung übernommen,
-// konnten in dieser Umgebung aber nicht gegen einen echten Moco-Account
-// getestet werden (kein Netzwerkzugriff auf mocoapp.com im Dev-Sandbox) -
-// bei abweichendem Verhalten bitte Rückmeldung, dann wird nachjustiert.
+// sind nach bestem Wissen aus der bestehenden Moco-Anbindung bzw. dem
+// Rechnungs-Layout übernommen, konnten in dieser Umgebung aber nicht
+// gegen einen echten Moco-Account getestet werden (kein Netzwerkzugriff
+// auf mocoapp.com im Dev-Sandbox) - bei abweichendem Verhalten bitte
+// Rückmeldung, dann wird nachjustiert.
 export async function mocoCreateInvoiceForBooking(booking) {
   const env = mocoEnv();
   if (!env) throw new Error("MOCO_DOMAIN oder MOCO_API_KEY fehlt.");
@@ -79,21 +100,32 @@ export async function mocoCreateInvoiceForBooking(booking) {
   const company = await mocoSearchCompany(searchTerm);
   if (!company) throw new Error(`Keine passende Firma in Moco gefunden für "${searchTerm}". Bitte Rechnungsfirma prüfen/in Moco anlegen.`);
 
-  const items = [];
-  const boxPrice = booking.custom_price ?? booking.price_net;
-  if (boxPrice) items.push({ type: "item", title: booking.title || "Fotobox-Miete", quantity: 1, unit: "Stück", unit_price: boxPrice });
-  if (booking.setup_cost) items.push({ type: "item", title: "Auf-/Abbau & Logistik", quantity: 1, unit: "Pauschale", unit_price: booking.setup_cost });
-  if (items.length === 0) throw new Error("Kein Preis hinterlegt - Rechnung kann nicht erstellt werden.");
+  const boxPrice = booking.custom_price ?? booking.price_net ?? 0;
+  const totalPrice = boxPrice + (booking.setup_cost || 0);
+  if (!totalPrice) throw new Error("Kein Preis hinterlegt - Rechnung kann nicht erstellt werden.");
+
+  const descriptionLines = [];
+  if (booking.start_date) descriptionLines.push(`Datum: ${fmtDateDE(booking.start_date)}`);
+  if (booking.location) descriptionLines.push(`Ort: ${booking.location}`);
+  descriptionLines.push("");
+  FOTOBOX_LEISTUNGEN.forEach(l => descriptionLines.push(`- ${l}`));
+  if (booking.logistics === "aufbau") descriptionLines.push("- Auf-/Abbau");
+
+  const items = [
+    { type: "item", title: "Fotobox mit Auf-/Abbau", quantity: 1, unit: "Stk", unit_price: totalPrice },
+    { type: "text", title: descriptionLines.join("\n") },
+  ];
 
   const todayStr = new Date().toISOString().slice(0, 10);
   const dueDateStr = new Date(Date.now() + 14 * 86400000).toISOString().slice(0, 10);
+  const recipientAddress = [booking.billing_company, booking.billing_address].filter(Boolean).join("\n") || company.name;
 
   const r = await fetch(`${env.base}/invoices`, {
     method: "POST", headers: env.headers,
     body: JSON.stringify({
       customer_id: company.id,
-      recipient_address: booking.billing_address || company.name,
-      title: booking.title || "Fotobox-Miete",
+      recipient_address: recipientAddress,
+      title: "Rechnung für die Miete der Fotobox",
       date: todayStr, due_date: dueDateStr, currency: "EUR", tax: 19.0, items,
     }),
   });
