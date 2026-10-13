@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import { supabase } from "./lib/supabase.js";
 import { uploadAttachment, deleteAttachment } from "./lib/attachments.js";
 import { LOGO_B64 } from "./logo.js";
@@ -592,17 +593,19 @@ export default function App() {
   const handleDuplicateJob = async ({ id, ...rest }) => {
     const row = { ...rest, name: `${rest.name} (Kopie)`, status: "Neu", sort_order: null };
     const { data: inserted, error } = await supabase.from("js_jobs").insert([row]).select(JOB_FIELDS).single();
-    if (error) { showToast("Duplizieren fehlgeschlagen: " + error.message, false); return; }
+    if (error) { showToast("Duplizieren fehlgeschlagen: " + error.message, false); return false; }
     setData(p => ({ ...p, fotostudioJobs: [inserted, ...p.fotostudioJobs] }));
     showToast(`Dupliziert: "${inserted.name}"`);
+    return true;
   };
 
   const handleArchiveJobRow = async (job) => {
     const { data: updated, error } = await supabase.from("js_jobs").update({ status: "Archiviert" }).eq("id", job.id).select(JOB_FIELDS).single();
-    if (error) { showToast("Archivieren fehlgeschlagen: " + error.message, false); return; }
+    if (error) { showToast("Archivieren fehlgeschlagen: " + error.message, false); return false; }
     setData(p => ({ ...p, fotostudioJobs: p.fotostudioJobs.map(j => j.id === job.id ? updated : j) }));
     if (job.bereich !== "Grafik") notifyMocoArchive(updated);
     showToast(`Archiviert: "${job.name}"`);
+    return true;
   };
 
   // Übergibt eine abgeschlossene Hochzeit an Grafik/Nachbearbeitung: legt
@@ -626,48 +629,56 @@ export default function App() {
   };
 
   const handleDeleteJobRow = async (job) => {
-    if (!window.confirm(`"${job.name}" wirklich endgültig löschen? Das kann nicht rückgängig gemacht werden.`)) return;
+    if (!window.confirm(`"${job.name}" wirklich endgültig löschen? Das kann nicht rückgängig gemacht werden.`)) return false;
     const { error } = await supabase.from("js_jobs").delete().eq("id", job.id);
-    if (error) { showToast("Löschen fehlgeschlagen: " + error.message, false); return; }
+    if (error) { showToast("Löschen fehlgeschlagen: " + error.message, false); return false; }
     setData(p => ({ ...p, fotostudioJobs: p.fotostudioJobs.filter(j => j.id !== job.id) }));
     showToast(`Gelöscht: "${job.name}"`);
+    return true;
   };
 
   // Duplizieren/Löschen für Fotobox-Buchungen und Hochzeiten - dieselbe
   // Funktion wie beim ⋯-Menü von Foto/Video & Grafik, nur auf den jeweils
   // eigenen Tabellen (fb_bookings bzw. hz_hochzeiten mit jsonb-"data"-Spalte).
+  // Geben alle true/false zurück (Aktion ausgeführt oder abgebrochen/fehl-
+  // geschlagen), damit ein aufrufendes Detailfenster weiß, ob es sich
+  // danach schließen soll.
   const handleDuplicateBooking = async ({ id, ...rest }) => {
     const row = { ...rest, title: `${rest.title} (Kopie)` };
     const { data: inserted, error } = await supabase.from("fb_bookings").insert([row]).select().single();
-    if (error) { showToast("Duplizieren fehlgeschlagen: " + error.message, false); return; }
+    if (error) { showToast("Duplizieren fehlgeschlagen: " + error.message, false); return false; }
     setData(p => ({ ...p, bookings: [...p.bookings, inserted].sort((a, b) => a.start_date.localeCompare(b.start_date)) }));
     showToast(`Dupliziert: "${inserted.title}"`);
+    return true;
   };
 
   const handleDeleteBooking = async (booking) => {
-    if (!window.confirm(`"${booking.title}" wirklich endgültig löschen? Das kann nicht rückgängig gemacht werden.`)) return;
+    if (!window.confirm(`"${booking.title}" wirklich endgültig löschen? Das kann nicht rückgängig gemacht werden.`)) return false;
     const { error } = await supabase.from("fb_bookings").delete().eq("id", booking.id);
-    if (error) { showToast("Löschen fehlgeschlagen: " + error.message, false); return; }
+    if (error) { showToast("Löschen fehlgeschlagen: " + error.message, false); return false; }
     setData(p => ({ ...p, bookings: p.bookings.filter(b => b.id !== booking.id) }));
     showToast(`Gelöscht: "${booking.title}"`);
+    return true;
   };
 
   const handleDuplicateWedding = async (item) => {
     const h = item.data || {};
     const row = { id: Date.now(), created_at: new Date().toISOString(), data: { ...h, partner1: `${h.partner1 || ""} (Kopie)`.trim() } };
     const { data: inserted, error } = await supabase.from("hz_hochzeiten").insert([row]).select().single();
-    if (error) { showToast("Duplizieren fehlgeschlagen: " + error.message, false); return; }
+    if (error) { showToast("Duplizieren fehlgeschlagen: " + error.message, false); return false; }
     setData(p => ({ ...p, hochzeiten: [...p.hochzeiten, inserted] }));
     showToast(`Dupliziert: "${inserted.data.partner1} & ${inserted.data.partner2 || ""}"`);
+    return true;
   };
 
   const handleDeleteWedding = async (item) => {
     const h = item.data || {};
-    if (!window.confirm(`"${h.partner1 || "?"} & ${h.partner2 || "?"}" wirklich endgültig löschen? Das kann nicht rückgängig gemacht werden.`)) return;
+    if (!window.confirm(`"${h.partner1 || "?"} & ${h.partner2 || "?"}" wirklich endgültig löschen? Das kann nicht rückgängig gemacht werden.`)) return false;
     const { error } = await supabase.from("hz_hochzeiten").delete().eq("id", item.id);
-    if (error) { showToast("Löschen fehlgeschlagen: " + error.message, false); return; }
+    if (error) { showToast("Löschen fehlgeschlagen: " + error.message, false); return false; }
     setData(p => ({ ...p, hochzeiten: p.hochzeiten.filter(x => x.id !== item.id) }));
     showToast("Hochzeit gelöscht");
+    return true;
   };
 
   // Setzt das Shooting-Datum eines Jobs auf heute - wird vom "Heute"-Ablagefeld
@@ -939,19 +950,23 @@ export default function App() {
             else await handleInsert(quickAddTarget, row);
             setQuickAddTarget(null); setQuickEditItem(null);
           }}
-          onHandoffToGrafik={async person => { await handleHandoffToGrafik(quickEditItem, person); setQuickAddTarget(null); setQuickEditItem(null); }} />
+          onHandoffToGrafik={async person => { await handleHandoffToGrafik(quickEditItem, person); setQuickAddTarget(null); setQuickEditItem(null); }}
+          onDuplicate={quickAddTarget === "fotobox" ? handleDuplicateBooking : quickAddTarget === "hochzeiten" ? handleDuplicateWedding : undefined}
+          onDelete={quickAddTarget === "fotobox" ? handleDeleteBooking : quickAddTarget === "hochzeiten" ? handleDeleteWedding : undefined} />
       )}
 
       {jobModal && (
         <JobFormModal mode={jobModal.mode} job={jobModal.job} team={team} onAiAction={applyAiAction} onChatJobsCreated={handleChatJobsCreated}
           onClose={() => setJobModal(null)}
-          onSubmit={async (values) => { await handleSaveJob(values, jobModal.job?.id); setJobModal(null); }} />
+          onSubmit={async (values) => { await handleSaveJob(values, jobModal.job?.id); setJobModal(null); }}
+          onDuplicate={handleDuplicateJob} onArchive={handleArchiveJobRow} onDelete={handleDeleteJobRow} />
       )}
 
       {grafikJobModal && (
         <GrafikJobFormModal mode={grafikJobModal.mode} job={grafikJobModal.job} team={team} onChatJobsCreated={handleChatJobsCreated}
           onClose={() => setGrafikJobModal(null)}
-          onSubmit={async (values) => { await handleSaveGrafikJob(values, grafikJobModal.job?.id); setGrafikJobModal(null); }} />
+          onSubmit={async (values) => { await handleSaveGrafikJob(values, grafikJobModal.job?.id); setGrafikJobModal(null); }}
+          onDuplicate={handleDuplicateJob} onArchive={handleArchiveJobRow} onDelete={handleDeleteJobRow} />
       )}
 
       {toast && (
@@ -1705,24 +1720,56 @@ function EquipmentView({ jobs, onJobClick }) {
 // ─── Kontextmenü (⋯) für Listenzeilen ──────────────────────────────────────
 // Duplizieren/Archivieren/Löschen direkt in der Übersicht, ohne erst ins
 // Projekt reinklicken zu müssen. Bereich-unabhängig (Foto/Video & Grafik).
+// Rendert sein Dropdown über ein Portal direkt in document.body, fest
+// positioniert anhand der Button-Koordinaten (statt position:absolute im
+// normalen Fluss) - sonst wird es vom overflow:hidden der umgebenden
+// Listenkarte abgeschnitten, besonders beim letzten Eintrag. Klappt bei
+// wenig Platz nach unten automatisch nach oben auf.
 function RowMenu({ onDuplicate, onArchive, onDelete, archived }) {
   const [open, setOpen] = useState(false);
-  const ref = useRef(null);
+  const [coords, setCoords] = useState(null);
+  const btnRef = useRef(null);
+  const menuRef = useRef(null);
+
+  const openMenu = () => {
+    const rect = btnRef.current.getBoundingClientRect();
+    const menuWidth = 180;
+    const menuHeightEstimate = 140;
+    let left = rect.right - menuWidth;
+    if (left < 8) left = 8;
+    if (left + menuWidth > window.innerWidth - 8) left = window.innerWidth - menuWidth - 8;
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const top = spaceBelow < menuHeightEstimate + 12 ? rect.top - menuHeightEstimate - 4 : rect.bottom + 4;
+    setCoords({ top, left });
+    setOpen(true);
+  };
+
   useEffect(() => {
     if (!open) return;
-    const handler = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    const handler = e => {
+      if (menuRef.current?.contains(e.target) || btnRef.current?.contains(e.target)) return;
+      setOpen(false);
+    };
     document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
+    const onScroll = () => setOpen(false);
+    window.addEventListener("scroll", onScroll, true);
+    window.addEventListener("resize", onScroll);
+    return () => {
+      document.removeEventListener("mousedown", handler);
+      window.removeEventListener("scroll", onScroll, true);
+      window.removeEventListener("resize", onScroll);
+    };
   }, [open]);
+
   const itemStyle = { padding: "10px 13px", display: "flex", alignItems: "center", gap: 9, cursor: "pointer", fontSize: 13, fontWeight: 600 };
   return (
-    <div ref={ref} style={{ position: "relative", flexShrink: 0 }} onClick={e => e.stopPropagation()}>
-      <div onClick={() => setOpen(o => !o)} title="Weitere Aktionen"
+    <div style={{ flexShrink: 0 }} onClick={e => e.stopPropagation()}>
+      <div ref={btnRef} onClick={() => (open ? setOpen(false) : openMenu())} title="Weitere Aktionen"
         style={{ width: 26, height: 26, borderRadius: 7, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: Z.textSoft }}>
         <i className="ti ti-dots" style={{ fontSize: 17 }}></i>
       </div>
-      {open && (
-        <div style={{ position: "absolute", top: 30, right: 0, background: Z.panel, border: `1px solid ${Z.border}`, borderRadius: 10, overflow: "hidden", zIndex: 30, minWidth: 180, boxShadow: "0 10px 30px rgba(0,0,0,0.5)" }}>
+      {open && coords && createPortal(
+        <div ref={menuRef} style={{ position: "fixed", top: coords.top, left: coords.left, background: Z.panel, border: `1px solid ${Z.border}`, borderRadius: 10, overflow: "hidden", zIndex: 200, minWidth: 180, boxShadow: "0 10px 30px rgba(0,0,0,0.5)" }}>
           <div onClick={() => { setOpen(false); onDuplicate(); }} style={itemStyle}>
             <i className="ti ti-copy" style={{ fontSize: 15, color: Z.textSoft }}></i>Duplizieren
           </div>
@@ -1734,7 +1781,8 @@ function RowMenu({ onDuplicate, onArchive, onDelete, archived }) {
           <div onClick={() => { setOpen(false); onDelete(); }} style={{ ...itemStyle, borderTop: `1px solid ${Z.borderSoft}`, color: Z.danger }}>
             <i className="ti ti-trash" style={{ fontSize: 15, color: Z.danger }}></i>Löschen
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
@@ -1882,7 +1930,7 @@ function PasswordGate({ endpoint, storageKey, accent, title, text, onUnlock }) {
 // Dient zugleich als Neuanlage- UND Bearbeiten-Dialog für Fotobox-Buchungen
 // und Hochzeiten (volles Formular statt nur Schnelleingabe): wird ein "item"
 // übergeben, ist es ein Bearbeiten-Vorgang (Update statt Insert).
-function QuickAddModal({ bereichKey, bereich, boxId, item, team, onClose, onSubmit, onHandoffToGrafik }) {
+function QuickAddModal({ bereichKey, bereich, boxId, item, team, onClose, onSubmit, onHandoffToGrafik, onDuplicate, onDelete }) {
   const cfg = QUICK_ADD[bereichKey];
   const isEdit = !!item;
   // Hochzeiten speichern alle Felder in der jsonb-Spalte "data", Fotobox-
@@ -2017,7 +2065,12 @@ function QuickAddModal({ bereichKey, bereich, boxId, item, team, onClose, onSubm
       <div style={{ background: Z.panel, border: `1px solid ${Z.border}`, borderBottom: "none", width: "100%", maxWidth: 520, borderRadius: "16px 16px 0 0", maxHeight: "92vh", display: "flex", flexDirection: "column" }}>
         <div style={{ padding: "16px 18px", borderBottom: `1px solid ${Z.border}`, display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
           <div style={{ fontSize: 16, fontWeight: 700 }}>{isEdit ? `${bereich?.label || ""} bearbeiten` : cfg.title}</div>
-          <i className="ti ti-x" onClick={onClose} style={{ fontSize: 18, color: Z.textSoft, cursor: "pointer" }}></i>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            {isEdit && item && onDuplicate && onDelete && (
+              <RowMenu onDuplicate={() => onDuplicate(item)} onDelete={async () => { if (await onDelete(item)) onClose(); }} />
+            )}
+            <i className="ti ti-x" onClick={onClose} style={{ fontSize: 18, color: Z.textSoft, cursor: "pointer" }}></i>
+          </div>
         </div>
         <div style={{ padding: "16px 18px", display: "flex", flexDirection: "column", gap: 16, overflowY: "auto" }}>
           {sections.map((sec, i) => (
@@ -2420,7 +2473,7 @@ function ChatCapture({ team, onCreated, bereich = "fotostudio" }) {
 // Eigenes, reicheres Formular (statt der generischen Schnelleingabe), da hier
 // die volle Fachlogik der alten Jobliste nachgebildet wird: Status-Pipeline,
 // Projekttyp/Kategorien, Personen-Zuordnung, Shooting-Zeitraum, Ort.
-function JobFormModal({ mode, job, team, onAiAction, onChatJobsCreated, onClose, onSubmit }) {
+function JobFormModal({ mode, job, team, onAiAction, onChatJobsCreated, onClose, onSubmit, onDuplicate, onArchive, onDelete }) {
   const [v, setV] = useState(() => mode === "edit" && job ? {
     ...splitName(job.name), status: job.status || "Neu", prio: job.prio || "Mittel", aufwand: job.aufwand || "Mittel",
     ort: job.ort || "Im Haus", personen: Array.isArray(job.personen) ? job.personen : [],
@@ -2514,7 +2567,15 @@ function JobFormModal({ mode, job, team, onAiAction, onChatJobsCreated, onClose,
       <div style={{ background: Z.panel, border: `1px solid ${Z.border}`, borderBottom: "none", width: "100%", maxWidth: 520, borderRadius: "16px 16px 0 0", maxHeight: "92vh", display: "flex", flexDirection: "column" }}>
         <div style={{ padding: "16px 18px", borderBottom: `1px solid ${Z.border}`, display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
           <div style={{ fontSize: 16, fontWeight: 700 }}>{mode === "edit" ? "Job bearbeiten" : "Neuer Job"}</div>
-          <i className="ti ti-x" onClick={onClose} style={{ fontSize: 18, color: Z.textSoft, cursor: "pointer" }}></i>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            {mode === "edit" && job && (
+              <RowMenu archived={job.status === "Archiviert"}
+                onDuplicate={() => onDuplicate(job)}
+                onArchive={async () => { if (await onArchive(job)) onClose(); }}
+                onDelete={async () => { if (await onDelete(job)) onClose(); }} />
+            )}
+            <i className="ti ti-x" onClick={onClose} style={{ fontSize: 18, color: Z.textSoft, cursor: "pointer" }}></i>
+          </div>
         </div>
         <div style={{ padding: "16px 18px", display: "flex", flexDirection: "column", gap: 14, overflowY: "auto" }}>
           {mode === "new" && (
@@ -2712,7 +2773,7 @@ function JobFormModal({ mode, job, team, onAiAction, onChatJobsCreated, onClose,
 // tun, wie viele Fotos/Videos sind betroffen, wann startet/endet es, wer
 // arbeitet dran und wie viele Stunden sind budgetiert (angelehnt an gängige
 // Agentur-Tools wie awork: Auftragsart, Zeitbudget, Zuständigkeit, Deadline).
-function GrafikJobFormModal({ mode, job, team, onChatJobsCreated, onClose, onSubmit }) {
+function GrafikJobFormModal({ mode, job, team, onChatJobsCreated, onClose, onSubmit, onDuplicate, onArchive, onDelete }) {
   const [v, setV] = useState(mode === "edit" && job ? {
     ...splitName(job.name), status: job.status || "Neu", auftragsart: job.auftragsart || "Bildbearbeitung",
     speicherort: job.speicherort || "", anzahl_fotos: job.anzahl_fotos ?? "", anzahl_videos: job.anzahl_videos ?? "",
@@ -2783,7 +2844,15 @@ function GrafikJobFormModal({ mode, job, team, onChatJobsCreated, onClose, onSub
       <div style={{ background: Z.panel, border: `1px solid ${Z.border}`, borderBottom: "none", width: "100%", maxWidth: 520, borderRadius: "16px 16px 0 0", maxHeight: "92vh", display: "flex", flexDirection: "column" }}>
         <div style={{ padding: "16px 18px", borderBottom: `1px solid ${Z.border}`, display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
           <div style={{ fontSize: 16, fontWeight: 700 }}>{mode === "edit" ? "Grafik-Job bearbeiten" : "Neuer Grafik-Job"}</div>
-          <i className="ti ti-x" onClick={onClose} style={{ fontSize: 18, color: Z.textSoft, cursor: "pointer" }}></i>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            {mode === "edit" && job && (
+              <RowMenu archived={job.status === "Archiviert"}
+                onDuplicate={() => onDuplicate(job)}
+                onArchive={async () => { if (await onArchive(job)) onClose(); }}
+                onDelete={async () => { if (await onDelete(job)) onClose(); }} />
+            )}
+            <i className="ti ti-x" onClick={onClose} style={{ fontSize: 18, color: Z.textSoft, cursor: "pointer" }}></i>
+          </div>
         </div>
         <div style={{ padding: "16px 18px", display: "flex", flexDirection: "column", gap: 14, overflowY: "auto" }}>
           {mode === "new" && (
