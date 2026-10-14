@@ -293,6 +293,10 @@ export default function App() {
   // Klick auf seinen Namen die eigenen Jobs herausfiltern ("Meine Jobs").
   const [fotoPersonFilter, setFotoPersonFilter] = useState("Alle");
   const [grafikPersonFilter, setGrafikPersonFilter] = useState("Alle");
+  // Foto/Video zusätzlich nach Ort (Im Haus/Außer Haus) und Projekttyp
+  // (Fotografie/Video) filterbar.
+  const [fotoOrtFilter, setFotoOrtFilter] = useState("Alle");
+  const [fotoTypFilter, setFotoTypFilter] = useState("Alle");
   useEffect(() => { try { localStorage.setItem("zp-foto-view", fotoView); } catch {} }, [fotoView]);
   useEffect(() => { try { localStorage.setItem("zp-foto-groupby", groupBy); } catch {} }, [groupBy]);
   useEffect(() => { try { localStorage.setItem("zp-grafik-view", grafikView); } catch {} }, [grafikView]);
@@ -417,7 +421,9 @@ export default function App() {
     return haystack.includes(term.trim().toLowerCase());
   };
   const matchesPerson = (job, person) => person === "Alle" || (Array.isArray(job.personen) && job.personen.includes(person));
-  const visibleFotoJobs = openJobs.filter(j => matchesSearch(j, fotoSearch) && matchesPerson(j, fotoPersonFilter)).slice().sort((a, b) => {
+  const matchesValue = (job, field, value) => value === "Alle" || job[field] === value;
+  const visibleFotoJobs = openJobs.filter(j => matchesSearch(j, fotoSearch) && matchesPerson(j, fotoPersonFilter)
+    && matchesValue(j, "ort", fotoOrtFilter) && matchesValue(j, "projekttyp", fotoTypFilter)).slice().sort((a, b) => {
     if (fotoDateSort) return (a.date || "9999-99-99").localeCompare(b.date || "9999-99-99");
     if (a.sort_order == null && b.sort_order == null) return 0;
     if (a.sort_order == null) return 1;
@@ -802,6 +808,8 @@ export default function App() {
           </div>
           {fotoView !== "equipment" && <SearchBox value={fotoSearch} onChange={setFotoSearch} placeholder="Suche nach Name, Kontakt, Notiz, Person…" />}
           {fotoView !== "equipment" && <PersonFilterChips team={team} value={fotoPersonFilter} onChange={setFotoPersonFilter} accent={BEREICH_BY_KEY.fotostudio.accent} />}
+          {fotoView !== "equipment" && <PersonFilterChips team={ORT_LIST} value={fotoOrtFilter} onChange={setFotoOrtFilter} accent={BEREICH_BY_KEY.fotostudio.accent} />}
+          {fotoView !== "equipment" && <PersonFilterChips team={Object.keys(PROJEKTTYP_CFG)} value={fotoTypFilter} onChange={setFotoTypFilter} accent={BEREICH_BY_KEY.fotostudio.accent} />}
 
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
             <div style={{ display: "flex", background: Z.panelAlt, borderRadius: 8, overflow: "hidden" }}>
