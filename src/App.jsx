@@ -303,7 +303,7 @@ export default function App() {
   useEffect(() => { try { localStorage.setItem("zp-grafik-view", grafikView); } catch {} }, [grafikView]);
   useEffect(() => { try { localStorage.setItem("zp-grafik-groupby", grafikGroupBy); } catch {} }, [grafikGroupBy]);
 
-  const JOB_FIELDS = "id,name,status,date,date_end,abgabe,dauer,prio,aufwand,kontakt,notizen,projekttyp,kategorien,personen,ort,bereich,attachments,stationen,sort_order,equipment,speicherort,auftragsart,anzahl_fotos,anzahl_videos,stunden_budget";
+  const JOB_FIELDS = "id,name,status,date,date_end,abgabe,dauer,prio,aufwand,kontakt,notizen,projekttyp,kategorien,personen,ort,bereich,attachments,stationen,sort_order,equipment,speicherort,auftragsart,anzahl_fotos,anzahl_videos,stunden_budget,moco_project_id";
   const [toast, setToast] = useState(null);
   const showToast = (msg, ok = true) => {
     setToast({ msg, ok });
@@ -330,6 +330,9 @@ export default function App() {
   // Legt direkt bei Jobanlage (nicht erst beim Archivieren) ein Moco-Projekt
   // beim passenden Kunden an, damit das Team schon während der Arbeit Zeiten
   // darauf buchen kann. Läuft best effort, blockiert das Speichern nie.
+  // Bei Grafik-Jobs wird die Projekt-ID zusätzlich am Job gespeichert
+  // (moco_project_id) und der aktuelle Status direkt als Moco-Tag gesetzt -
+  // Grundlage dafür, dass spätere Statuswechsel das Moco-Projekt mitziehen.
   const notifyMocoCreateProject = async (job) => {
     try {
       const res = await fetch("/api/moco-create-project", {
@@ -337,10 +340,35 @@ export default function App() {
       });
       const result = await res.json();
       if (!res.ok) throw new Error(result.error || "Moco-Fehler");
-      if (result.matched) showToast(`✓ Moco-Projekt angelegt: "${result.companyName}" – ${result.projectName}`);
-      else showToast(`Job angelegt – keine passende Moco-Firma für "${result.searchTerm}" gefunden, kein Moco-Projekt erstellt`, false);
+      if (result.matched) {
+        showToast(`✓ Moco-Projekt angelegt: "${result.companyName}" – ${result.projectName}`);
+        if (result.projectId) {
+          const { data: updated } = await supabase.from("js_jobs").update({ moco_project_id: String(result.projectId) }).eq("id", job.id).select(JOB_FIELDS).single();
+          if (updated) {
+            setData(p => ({ ...p, fotostudioJobs: p.fotostudioJobs.map(j => j.id === job.id ? updated : j) }));
+            if (updated.bereich === "Grafik") notifyMocoSetProjectTag(updated);
+          }
+        }
+      } else showToast(`Job angelegt – keine passende Moco-Firma für "${result.searchTerm}" gefunden, kein Moco-Projekt erstellt`, false);
     } catch (e) {
       showToast("Moco-Projekt anlegen fehlgeschlagen: " + e.message, false);
+    }
+  };
+
+  // Spiegelt den App-Status eines Grafik-Jobs als Projekt-Tag in Moco
+  // (ersetzt den vorherigen Rechnungsentwurf-Automatismus). Kein Erfolgs-
+  // Toast, da das bei jedem Statusklick aufgerufen wird - nur Fehler melden.
+  const notifyMocoSetProjectTag = async (job) => {
+    if (!job.moco_project_id) return;
+    try {
+      const res = await fetch("/api/moco-archive", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "set-tag", projectId: job.moco_project_id, tag: job.status }),
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || "Moco-Fehler");
+    } catch (e) {
+      showToast("Moco-Status aktualisieren fehlgeschlagen: " + e.message, false);
     }
   };
 
@@ -573,22 +601,6 @@ export default function App() {
 
   // Speichert einen Grafik-/Nachbearbeitungs-Job - schlankere Fachlogik als
   // Foto/Video, auf Grafik-Mitarbeiter/Mediengestalter zugeschnitten.
-  // Legt bei "Kann abgerechnet werden" automatisch einen Moco-Rechnungsentwurf
-  // an - best effort, blockiert das Speichern/Weiterschalten nie.
-  const notifyMocoGrafikInvoiceDraft = async (job) => {
-    try {
-      const res = await fetch("/api/moco-archive", {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ job, action: "grafik-invoice-draft" }),
-      });
-      const result = await res.json();
-      if (!res.ok) throw new Error(result.error || "Moco-Fehler");
-      if (result.matched) showToast(`✓ Moco-Rechnungsentwurf angelegt: "${result.companyName}"${result.invoiceNumber ? " (" + result.invoiceNumber + ")" : ""}`);
-      else showToast(`Keine passende Moco-Firma für "${result.searchTerm}" gefunden – kein Rechnungsentwurf erstellt`, false);
-    } catch (e) {
-      showToast("Moco-Rechnungsentwurf fehlgeschlagen: " + e.message, false);
-    }
-  };
-
   const handleSaveGrafikJob = async (values, existingId) => {
     const row = {
       name: joinName(values.kunde, values.jobname), status: values.status || "Offen", bereich: "Grafik",
@@ -607,11 +619,12 @@ export default function App() {
       const { data: updated, error } = await supabase.from("js_jobs").update(row).eq("id", existingId).select(JOB_FIELDS).single();
       if (error) throw error;
       setData(p => ({ ...p, fotostudioJobs: p.fotostudioJobs.map(j => j.id === existingId ? updated : j) }));
-      if (updated.status === "Kann abgerechnet werden" && vorherigerStatus !== "Kann abgerechnet werden") notifyMocoGrafikInvoiceDraft(updated);
+      if (updated.status !== vorherigerStatus) notifyMocoSetProjectTag(updated);
     } else {
       const { data: inserted, error } = await supabase.from("js_jobs").insert([row]).select(JOB_FIELDS).single();
       if (error) throw error;
       setData(p => ({ ...p, fotostudioJobs: [inserted, ...p.fotostudioJobs] }));
+      notifyMocoCreateProject(inserted);
     }
   };
 
@@ -621,14 +634,16 @@ export default function App() {
     const { data: updated, error } = await supabase.from("js_jobs").update({ status: next }).eq("id", job.id).select(JOB_FIELDS).single();
     if (error) { console.error(error.message); return; }
     setData(p => ({ ...p, fotostudioJobs: p.fotostudioJobs.map(j => j.id === job.id ? updated : j) }));
-    if (next === "Kann abgerechnet werden") notifyMocoGrafikInvoiceDraft(updated);
+    notifyMocoSetProjectTag(updated);
   };
 
   // Kontextmenü (⋯) direkt in der Listenzeile - Duplizieren/Archivieren/Löschen,
   // ohne dass man erst ins Projekt reinklicken muss. Funktioniert identisch für
   // Foto/Video- und Grafik-Jobs, da beide in js_jobs liegen (bereich-Spalte).
+  // moco_project_id wird NICHT übernommen - ein Duplikat ist ein eigener Job
+  // und bekommt beim nächsten Speichern ein eigenes Moco-Projekt.
   const handleDuplicateJob = async ({ id, ...rest }) => {
-    const row = { ...rest, name: `${rest.name} (Kopie)`, status: rest.bereich === "Grafik" ? "Offen" : "Neu", sort_order: null };
+    const row = { ...rest, name: `${rest.name} (Kopie)`, status: rest.bereich === "Grafik" ? "Offen" : "Neu", sort_order: null, moco_project_id: null };
     const { data: inserted, error } = await supabase.from("js_jobs").insert([row]).select(JOB_FIELDS).single();
     if (error) { showToast("Duplizieren fehlgeschlagen: " + error.message, false); return false; }
     setData(p => ({ ...p, fotostudioJobs: [inserted, ...p.fotostudioJobs] }));
@@ -644,7 +659,7 @@ export default function App() {
     const { data: updated, error } = await supabase.from("js_jobs").update({ status: archiveStatus }).eq("id", job.id).select(JOB_FIELDS).single();
     if (error) { showToast("Archivieren fehlgeschlagen: " + error.message, false); return false; }
     setData(p => ({ ...p, fotostudioJobs: p.fotostudioJobs.map(j => j.id === job.id ? updated : j) }));
-    if (job.bereich !== "Grafik") notifyMocoArchive(updated);
+    if (job.bereich === "Grafik") notifyMocoSetProjectTag(updated); else notifyMocoArchive(updated);
     showToast(`Archiviert: "${job.name}"`);
     return true;
   };
@@ -664,6 +679,7 @@ export default function App() {
     const { data: updatedSource, error: err2 } = await supabase.from("js_jobs").update({ status: "Abgeschlossen" }).eq("id", job.id).select(JOB_FIELDS).single();
     if (err2) { showToast("Übergabe gespeichert, Quelljob konnte nicht abgeschlossen werden: " + err2.message, false); }
     setData(p => ({ ...p, fotostudioJobs: [inserted, ...p.fotostudioJobs.map(j => j.id === job.id && updatedSource ? updatedSource : j)] }));
+    notifyMocoCreateProject(inserted);
     showToast(`An Grafik übergeben: "${inserted.name}"`);
   };
 
@@ -682,6 +698,7 @@ export default function App() {
     const { data: inserted, error } = await supabase.from("js_jobs").insert([row]).select(JOB_FIELDS).single();
     if (error) { showToast("Übergabe fehlgeschlagen: " + error.message, false); return; }
     setData(p => ({ ...p, fotostudioJobs: [inserted, ...p.fotostudioJobs] }));
+    notifyMocoCreateProject(inserted);
     const { data: patched } = await supabase.from("hz_hochzeiten").update({ data: { ...h, grafikJobId: inserted.id } }).eq("id", hochzeitItem.id).select().single();
     if (patched) setData(p => ({ ...p, hochzeiten: p.hochzeiten.map(x => x.id === hochzeitItem.id ? patched : x) }));
     showToast(`An Grafik übergeben: "${inserted.name}"`);

@@ -3,10 +3,10 @@
 // Notiz, dass der Auftrag abrechnungsbereit ist. Übernommen aus der alten
 // Fotostudio-Jobliste (api/moco-archive.js), Feldnamen an das neue
 // js_jobs-Schema angepasst (projekttyp/kategorien/date/kontakt identisch).
-// Zweite Aktion ("grafik-invoice-draft") über denselben Endpunkt, statt eine
-// eigene Datei anzulegen - Vercel Hobby erlaubt max. 12 Serverless Functions,
-// die bereits ausgeschöpft sind.
-import { mocoCreateInvoiceDraftForGrafikJob } from "./_lib/moco.js";
+// Zweite Aktion ("set-tag") über denselben Endpunkt, statt eine eigene Datei
+// anzulegen - Vercel Hobby erlaubt max. 12 Serverless Functions, die bereits
+// ausgeschöpft sind. Spiegelt den Grafik-Job-Status als Projekt-Tag in Moco.
+import { mocoSetProjectTag } from "./_lib/moco.js";
 
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -15,17 +15,19 @@ export default async function handler(req, res) {
   if (req.method === "OPTIONS") return res.status(200).end();
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
-  const { job, action } = req.body || {};
-  if (!job?.name) return res.status(400).json({ error: "Kein Job übermittelt" });
+  const { job, action, projectId, tag } = req.body || {};
 
-  if (action === "grafik-invoice-draft") {
+  if (action === "set-tag") {
+    if (!projectId || !tag) return res.status(400).json({ error: "projectId oder tag fehlt" });
     try {
-      const result = await mocoCreateInvoiceDraftForGrafikJob(job);
-      return res.status(200).json(result);
+      await mocoSetProjectTag(projectId, tag);
+      return res.status(200).json({ ok: true });
     } catch (e) {
       return res.status(500).json({ error: e.message });
     }
   }
+
+  if (!job?.name) return res.status(400).json({ error: "Kein Job übermittelt" });
 
   const mocoDomain = process.env.MOCO_DOMAIN;
   const mocoKey = process.env.MOCO_API_KEY;
