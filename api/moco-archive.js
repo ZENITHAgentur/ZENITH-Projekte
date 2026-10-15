@@ -3,6 +3,11 @@
 // Notiz, dass der Auftrag abrechnungsbereit ist. Übernommen aus der alten
 // Fotostudio-Jobliste (api/moco-archive.js), Feldnamen an das neue
 // js_jobs-Schema angepasst (projekttyp/kategorien/date/kontakt identisch).
+// Zweite Aktion ("grafik-invoice-draft") über denselben Endpunkt, statt eine
+// eigene Datei anzulegen - Vercel Hobby erlaubt max. 12 Serverless Functions,
+// die bereits ausgeschöpft sind.
+import { mocoCreateInvoiceDraftForGrafikJob } from "./_lib/moco.js";
+
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
@@ -10,14 +15,23 @@ export default async function handler(req, res) {
   if (req.method === "OPTIONS") return res.status(200).end();
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
+  const { job, action } = req.body || {};
+  if (!job?.name) return res.status(400).json({ error: "Kein Job übermittelt" });
+
+  if (action === "grafik-invoice-draft") {
+    try {
+      const result = await mocoCreateInvoiceDraftForGrafikJob(job);
+      return res.status(200).json(result);
+    } catch (e) {
+      return res.status(500).json({ error: e.message });
+    }
+  }
+
   const mocoDomain = process.env.MOCO_DOMAIN;
   const mocoKey = process.env.MOCO_API_KEY;
   if (!mocoDomain || !mocoKey) {
     return res.status(500).json({ error: "MOCO_DOMAIN oder MOCO_API_KEY fehlt. Bitte in Vercel → Environment Variables eintragen." });
   }
-
-  const { job } = req.body || {};
-  if (!job?.name) return res.status(400).json({ error: "Kein Job übermittelt" });
 
   const MOCO_BASE = `https://${mocoDomain}.mocoapp.com/api/v1`;
   const MOCO_HEADERS = {

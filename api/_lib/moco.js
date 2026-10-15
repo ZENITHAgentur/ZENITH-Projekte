@@ -134,6 +134,51 @@ export async function mocoCreateInvoiceForBooking(booking) {
   return { invoiceId: invoice.id, invoiceNumber: invoice.identifier || invoice.invoice_number || null, companyName: company.name };
 }
 
+// Stundensatz für den automatischen Grafik-Rechnungsentwurf (siehe unten) -
+// über Vercel-Env-Var konfigurierbar, falls das Standard-Honorar abweicht.
+const GRAFIK_STUNDENSATZ = Number(process.env.MOCO_GRAFIK_STUNDENSATZ) || 75;
+
+// Legt einen Rechnungs-ENTWURF in Moco an, sobald ein Grafik-Job auf "Kann
+// abgerechnet werden" gesetzt wird (Button bzw. Status-Weiterschaltung in
+// der App). Bewusst ein Entwurf (kein automatischer Versand): Grafik-Jobs
+// haben keinen festen Preis wie die Fotobox, daher wird - falls ein Stunden-
+// budget hinterlegt ist - eine Position mit Stundensatz vorbefüllt, sonst
+// nur ein Text-Posten zur manuellen Ergänzung in Moco.
+export async function mocoCreateInvoiceDraftForGrafikJob(job) {
+  const env = mocoEnv();
+  if (!env) throw new Error("MOCO_DOMAIN oder MOCO_API_KEY fehlt.");
+  if (!job?.name) throw new Error("Kein Job übermittelt");
+  const searchTerm = job.name.includes(" | ") ? job.name.split(" | ")[0].trim() : job.name.trim();
+  const company = await mocoSearchCompany(searchTerm);
+  if (!company) return { matched: false, searchTerm };
+
+  const leistung = `Grafik/Nachbearbeitung${job.auftragsart ? " – " + job.auftragsart : ""}`;
+  const hours = Number(job.stunden_budget) || 0;
+  const items = hours > 0
+    ? [{ type: "item", title: leistung, quantity: hours, unit: "Std.", unit_price: GRAFIK_STUNDENSATZ }]
+    : [{ type: "text", title: `${leistung} – Stunden/Preis bitte in Moco ergänzen.` }];
+
+  const detailLines = [];
+  if (job.anzahl_fotos) detailLines.push(`Fotos: ${job.anzahl_fotos}`);
+  if (job.anzahl_videos) detailLines.push(`Videos: ${job.anzahl_videos}`);
+  if (job.speicherort) detailLines.push(`Speicherort: ${job.speicherort}`);
+  if (detailLines.length > 0) items.push({ type: "text", title: detailLines.join("\n") });
+
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const dueDateStr = new Date(Date.now() + 14 * 86400000).toISOString().slice(0, 10);
+
+  const r = await fetch(`${env.base}/invoices`, {
+    method: "POST", headers: env.headers,
+    body: JSON.stringify({
+      customer_id: company.id, recipient_address: company.name,
+      title: job.name, date: todayStr, due_date: dueDateStr, currency: "EUR", tax: 19.0, items,
+    }),
+  });
+  if (!r.ok) throw new Error(`Moco-Rechnungsentwurf anlegen fehlgeschlagen: ${await r.text()}`);
+  const invoice = await r.json();
+  return { matched: true, invoiceId: invoice.id, invoiceNumber: invoice.identifier || invoice.invoice_number || null, companyName: company.name };
+}
+
 export async function mocoCreateProjectForJob(job) {
   if (!job?.name) throw new Error("Kein Job übermittelt");
   const searchTerm = job.name.includes(" – ") ? job.name.split(" – ")[0].trim() : job.name.trim();

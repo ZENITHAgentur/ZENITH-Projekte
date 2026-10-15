@@ -36,36 +36,33 @@ const BEREICH_BY_KEY = Object.fromEntries(BEREICHE.map(b => [b.key, b]));
 // ─── Fachlogik Foto-/Videoproduktion ───────────────────────────────────────
 // Status-Pipeline und Kategorisierung spiegeln die alte Fotostudio-Jobliste,
 // damit das Team die gewohnten Begriffe wiederfindet.
-const STATUS_LIST = ["Neu", "In Arbeit", "Abgeschlossen", "Archiviert"];
+const STATUS_LIST = ["Neu", "In Arbeit", "Kann bearbeitet werden", "Abgeschlossen", "Archiviert"];
 const STATUS_CFG = {
   "Neu": { color: "#4ADE80" },
   "In Arbeit": { color: "#4F9CDB" },
+  "Kann bearbeitet werden": { color: BEREICH_BY_KEY.grafik.accent },
   "Abgeschlossen": { color: "#9A968C" },
-  "Archiviert": { color: "#A66FE0" },
+  "Archiviert": { color: "#6B675F" },
 };
 // ─── Fachlogik Grafik/Nachbearbeitung ──────────────────────────────────────
-// Bewusst schlanker als Foto/Video: speziell für Grafik-Mitarbeiter/
-// Mediengestalter, die wissen müssen, wo die Daten liegen, was genau zu tun
-// ist, wie viele Fotos/Videos betroffen sind, wann es losgeht/fertig sein
-// muss, wer dran arbeitet und wie viele Stunden budgetiert sind.
-const GRAFIK_STATUS_LIST = [
-  "Neu", "In Arbeit", "Warten auf Feedback (Kunde)", "Warten auf Feedback (intern)",
-  "Pausiert", "Abgeschlossen", "Freigegeben", "Kann abgerechnet werden", "Archiviert",
-];
+// Status-Pipeline bewusst 1:1 an die echten Moco-Projektstatus angelehnt
+// (gegen den Moco-Account geprüft), damit das Team dieselben Begriffe wie in
+// Moco wiederfindet. "Abgeschlossen", "Kann abgerechnet werden" und "Nicht
+// abrechnen" gelten als abgeschlossen/erledigt (siehe GRAFIK_DONE_STATUSES)
+// und verschwinden daher aus der Liste laufender Projekte ins Archiv.
+const GRAFIK_STATUS_LIST = ["Offen", "Läuft", "Überprüfen", "Kann abgerechnet werden", "Abgeschlossen", "Nicht abrechnen"];
 const GRAFIK_STATUS_CFG = {
-  "Neu": { color: "#4ADE80" },
-  "In Arbeit": { color: "#4F9CDB" },
-  "Warten auf Feedback (Kunde)": { color: "#E8963C" },
-  "Warten auf Feedback (intern)": { color: "#E0BE5C" },
-  "Pausiert": { color: "#9A968C" },
-  "Abgeschlossen": { color: "#45B990" },
-  "Freigegeben": { color: "#2FAE60" },
+  "Offen": { color: "#4ADE80" },
+  "Läuft": { color: "#4F9CDB" },
+  "Überprüfen": { color: "#E8963C" },
   "Kann abgerechnet werden": { color: "#C9A227" },
-  "Archiviert": { color: "#A66FE0" },
+  "Abgeschlossen": { color: "#45B990" },
+  "Nicht abrechnen": { color: "#9A968C" },
 };
+const GRAFIK_DONE_STATUSES = ["Abgeschlossen", "Kann abgerechnet werden", "Nicht abrechnen"];
 const GRAFIK_AUFTRAGSART_LIST = ["Bildbearbeitung", "Anzeige", "Nachbestellung", "Katalog", "Sonstiges"];
 const EMPTY_GRAFIK_JOB_FORM = {
-  kunde: "", jobname: "", status: "Neu", auftragsart: "Bildbearbeitung", speicherort: "", anzahl_fotos: "", anzahl_videos: "",
+  kunde: "", jobname: "", status: "Offen", auftragsart: "Bildbearbeitung", speicherort: "", anzahl_fotos: "", anzahl_videos: "",
   prio: "Mittel", aufwand: "Mittel", personen: [], date: "", abgabe: "", stunden_budget: "", kontakt: "", notizen: "", attachments: [],
 };
 const PRIO_LIST = ["Hoch", "Mittel", "Niedrig"];
@@ -297,6 +294,10 @@ export default function App() {
   // (Fotografie/Video) filterbar.
   const [fotoOrtFilter, setFotoOrtFilter] = useState("Alle");
   const [fotoTypFilter, setFotoTypFilter] = useState("Alle");
+  // Filter nach Statusmeldung - wirkt sowohl auf die offene Liste als auch
+  // auf den Archiv-Tab (dort z.B. "Abgeschlossen" vs. "Archiviert" trennen).
+  const [fotoStatusFilter, setFotoStatusFilter] = useState("Alle");
+  const [grafikStatusFilter, setGrafikStatusFilter] = useState("Alle");
   useEffect(() => { try { localStorage.setItem("zp-foto-view", fotoView); } catch {} }, [fotoView]);
   useEffect(() => { try { localStorage.setItem("zp-foto-groupby", groupBy); } catch {} }, [groupBy]);
   useEffect(() => { try { localStorage.setItem("zp-grafik-view", grafikView); } catch {} }, [grafikView]);
@@ -407,12 +408,18 @@ export default function App() {
   // Grafik hat seit der erweiterten Status-Pipeline eigene Zwischenschritte
   // nach "Abgeschlossen" (Freigegeben, Kann abgerechnet werden) - die bleiben
   // bewusst in der offenen Liste sichtbar, bis der Job final archiviert wird.
-  const openJobsAll = data.fotostudioJobs.filter(j => j.bereich === "Grafik" ? j.status !== "Archiviert" : !["Abgeschlossen", "Archiviert"].includes(j.status));
+  const openJobsAll = data.fotostudioJobs.filter(j => j.bereich === "Grafik" ? !GRAFIK_DONE_STATUSES.includes(j.status) : !["Abgeschlossen", "Archiviert"].includes(j.status));
   // Die alte Fotostudio-Jobliste führt Produktion (Foto/Video) und Grafik
   // (Nachbearbeitung) als einen gemeinsamen Datensatz, unterschieden durch
   // das Feld "bereich" - hier entsprechend gespiegelt.
   const openJobs = openJobsAll.filter(j => j.bereich !== "Grafik");
   const openJobsGrafik = openJobsAll.filter(j => j.bereich === "Grafik");
+  // Abgeschlossene/archivierte Jobs verschwinden aus der offenen Liste,
+  // waren bisher aber nirgends mehr einsehbar - eigener Archiv-Tab je
+  // Bereich zeigt sie wieder (Statuspill-Klick schaltet sie wie gewohnt
+  // weiter/zurück zu "Neu", um einen Job bei Bedarf wieder zu öffnen).
+  const archivedFotoJobs = data.fotostudioJobs.filter(j => j.bereich !== "Grafik" && ["Abgeschlossen", "Archiviert"].includes(j.status));
+  const archivedGrafikJobs = data.fotostudioJobs.filter(j => j.bereich === "Grafik" && GRAFIK_DONE_STATUSES.includes(j.status));
   // Suche wirkt nur auf die Anzeige (Name/Kontakt/Notizen/Personen), wie in
   // der alten Fotostudio-Jobliste.
   const matchesSearch = (job, term) => {
@@ -423,17 +430,21 @@ export default function App() {
   const matchesPerson = (job, person) => person === "Alle" || (Array.isArray(job.personen) && job.personen.includes(person));
   const matchesValue = (job, field, value) => value === "Alle" || job[field] === value;
   const visibleFotoJobs = openJobs.filter(j => matchesSearch(j, fotoSearch) && matchesPerson(j, fotoPersonFilter)
-    && matchesValue(j, "ort", fotoOrtFilter) && matchesValue(j, "projekttyp", fotoTypFilter)).slice().sort((a, b) => {
+    && matchesValue(j, "ort", fotoOrtFilter) && matchesValue(j, "projekttyp", fotoTypFilter) && matchesValue(j, "status", fotoStatusFilter)).slice().sort((a, b) => {
     if (fotoDateSort) return (a.date || "9999-99-99").localeCompare(b.date || "9999-99-99");
     if (a.sort_order == null && b.sort_order == null) return 0;
     if (a.sort_order == null) return 1;
     if (b.sort_order == null) return -1;
     return a.sort_order - b.sort_order;
   });
-  const visibleGrafikJobs = openJobsGrafik.filter(j => matchesSearch(j, grafikSearch) && matchesPerson(j, grafikPersonFilter)).slice().sort((a, b) => {
+  const visibleGrafikJobs = openJobsGrafik.filter(j => matchesSearch(j, grafikSearch) && matchesPerson(j, grafikPersonFilter) && matchesValue(j, "status", grafikStatusFilter)).slice().sort((a, b) => {
     if (!grafikDateSort) return 0;
     return (a.abgabe || a.date || "9999-99-99").localeCompare(b.abgabe || b.date || "9999-99-99");
   });
+  // Statusfilter gilt auch im Archiv-Tab (z.B. "Abgeschlossen" von "Archiviert"
+  // bzw. von "Nicht abrechnen" trennen).
+  const visibleArchivedFotoJobs = archivedFotoJobs.filter(j => matchesValue(j, "status", fotoStatusFilter));
+  const visibleArchivedGrafikJobs = archivedGrafikJobs.filter(j => matchesValue(j, "status", grafikStatusFilter));
   const todaysFotoJobs = openJobsAll.filter(j => j.bereich !== "Grafik" && jobActiveOn(j, t));
   const upcomingBookings = data.bookings
     .filter(b => b.start_date >= t && b.status !== "storniert")
@@ -562,9 +573,25 @@ export default function App() {
 
   // Speichert einen Grafik-/Nachbearbeitungs-Job - schlankere Fachlogik als
   // Foto/Video, auf Grafik-Mitarbeiter/Mediengestalter zugeschnitten.
+  // Legt bei "Kann abgerechnet werden" automatisch einen Moco-Rechnungsentwurf
+  // an - best effort, blockiert das Speichern/Weiterschalten nie.
+  const notifyMocoGrafikInvoiceDraft = async (job) => {
+    try {
+      const res = await fetch("/api/moco-archive", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ job, action: "grafik-invoice-draft" }),
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || "Moco-Fehler");
+      if (result.matched) showToast(`✓ Moco-Rechnungsentwurf angelegt: "${result.companyName}"${result.invoiceNumber ? " (" + result.invoiceNumber + ")" : ""}`);
+      else showToast(`Keine passende Moco-Firma für "${result.searchTerm}" gefunden – kein Rechnungsentwurf erstellt`, false);
+    } catch (e) {
+      showToast("Moco-Rechnungsentwurf fehlgeschlagen: " + e.message, false);
+    }
+  };
+
   const handleSaveGrafikJob = async (values, existingId) => {
     const row = {
-      name: joinName(values.kunde, values.jobname), status: values.status || "Neu", bereich: "Grafik",
+      name: joinName(values.kunde, values.jobname), status: values.status || "Offen", bereich: "Grafik",
       auftragsart: values.auftragsart || "Bildbearbeitung", speicherort: values.speicherort || null,
       anzahl_fotos: values.anzahl_fotos === "" ? null : Number(values.anzahl_fotos),
       anzahl_videos: values.anzahl_videos === "" ? null : Number(values.anzahl_videos),
@@ -575,9 +602,12 @@ export default function App() {
       kontakt: values.kontakt || "", notizen: values.notizen || "", attachments: values.attachments || [],
     };
     if (existingId) {
+      const vorher = data.fotostudioJobs.find(j => j.id === existingId);
+      const vorherigerStatus = vorher?.status;
       const { data: updated, error } = await supabase.from("js_jobs").update(row).eq("id", existingId).select(JOB_FIELDS).single();
       if (error) throw error;
       setData(p => ({ ...p, fotostudioJobs: p.fotostudioJobs.map(j => j.id === existingId ? updated : j) }));
+      if (updated.status === "Kann abgerechnet werden" && vorherigerStatus !== "Kann abgerechnet werden") notifyMocoGrafikInvoiceDraft(updated);
     } else {
       const { data: inserted, error } = await supabase.from("js_jobs").insert([row]).select(JOB_FIELDS).single();
       if (error) throw error;
@@ -591,13 +621,14 @@ export default function App() {
     const { data: updated, error } = await supabase.from("js_jobs").update({ status: next }).eq("id", job.id).select(JOB_FIELDS).single();
     if (error) { console.error(error.message); return; }
     setData(p => ({ ...p, fotostudioJobs: p.fotostudioJobs.map(j => j.id === job.id ? updated : j) }));
+    if (next === "Kann abgerechnet werden") notifyMocoGrafikInvoiceDraft(updated);
   };
 
   // Kontextmenü (⋯) direkt in der Listenzeile - Duplizieren/Archivieren/Löschen,
   // ohne dass man erst ins Projekt reinklicken muss. Funktioniert identisch für
   // Foto/Video- und Grafik-Jobs, da beide in js_jobs liegen (bereich-Spalte).
   const handleDuplicateJob = async ({ id, ...rest }) => {
-    const row = { ...rest, name: `${rest.name} (Kopie)`, status: "Neu", sort_order: null };
+    const row = { ...rest, name: `${rest.name} (Kopie)`, status: rest.bereich === "Grafik" ? "Offen" : "Neu", sort_order: null };
     const { data: inserted, error } = await supabase.from("js_jobs").insert([row]).select(JOB_FIELDS).single();
     if (error) { showToast("Duplizieren fehlgeschlagen: " + error.message, false); return false; }
     setData(p => ({ ...p, fotostudioJobs: [inserted, ...p.fotostudioJobs] }));
@@ -605,13 +636,35 @@ export default function App() {
     return true;
   };
 
+  // Archivieren setzt bei Foto/Video "Archiviert", bei Grafik (das diesen
+  // Status nicht mehr kennt, siehe GRAFIK_STATUS_LIST) stattdessen
+  // "Abgeschlossen" - beides verschwindet dadurch aus der laufenden Liste.
   const handleArchiveJobRow = async (job) => {
-    const { data: updated, error } = await supabase.from("js_jobs").update({ status: "Archiviert" }).eq("id", job.id).select(JOB_FIELDS).single();
+    const archiveStatus = job.bereich === "Grafik" ? "Abgeschlossen" : "Archiviert";
+    const { data: updated, error } = await supabase.from("js_jobs").update({ status: archiveStatus }).eq("id", job.id).select(JOB_FIELDS).single();
     if (error) { showToast("Archivieren fehlgeschlagen: " + error.message, false); return false; }
     setData(p => ({ ...p, fotostudioJobs: p.fotostudioJobs.map(j => j.id === job.id ? updated : j) }));
     if (job.bereich !== "Grafik") notifyMocoArchive(updated);
     showToast(`Archiviert: "${job.name}"`);
     return true;
+  };
+
+  // Übergibt einen Foto/Video-Job im Status "Kann bearbeitet werden" an
+  // Grafik/Nachbearbeitung: legt dort einen neuen Grafik-Job an und schließt
+  // den Foto/Video-Job ab (verhindert doppelte Übergabe über denselben Button).
+  const handleHandoffFotoToGrafik = async (job, person) => {
+    const row = {
+      name: job.name, status: "Offen", bereich: "Grafik", auftragsart: "Bildbearbeitung", speicherort: null,
+      personen: person ? [person] : [], person: person || "",
+      date: job.date || null, kontakt: job.kontakt || "",
+      notizen: `Automatisch aus Foto/Video übergeben.${job.notizen ? "\n" + job.notizen : ""}`,
+    };
+    const { data: inserted, error } = await supabase.from("js_jobs").insert([row]).select(JOB_FIELDS).single();
+    if (error) { showToast("Übergabe fehlgeschlagen: " + error.message, false); return; }
+    const { data: updatedSource, error: err2 } = await supabase.from("js_jobs").update({ status: "Abgeschlossen" }).eq("id", job.id).select(JOB_FIELDS).single();
+    if (err2) { showToast("Übergabe gespeichert, Quelljob konnte nicht abgeschlossen werden: " + err2.message, false); }
+    setData(p => ({ ...p, fotostudioJobs: [inserted, ...p.fotostudioJobs.map(j => j.id === job.id && updatedSource ? updatedSource : j)] }));
+    showToast(`An Grafik übergeben: "${inserted.name}"`);
   };
 
   // Übergibt eine abgeschlossene Hochzeit an Grafik/Nachbearbeitung: legt
@@ -621,7 +674,7 @@ export default function App() {
     const h = hochzeitItem.data || {};
     const name = joinName(`${h.partner1 || "?"} & ${h.partner2 || ""}`.trim(), "Hochzeit – Nachbearbeitung");
     const row = {
-      name, status: "Neu", bereich: "Grafik", auftragsart: "Bildbearbeitung", speicherort: null,
+      name, status: "Offen", bereich: "Grafik", auftragsart: "Bildbearbeitung", speicherort: null,
       personen: person ? [person] : [], person: person || "",
       date: h.hochzeitsDatum || null, kontakt: h.email || h.telefon || "",
       notizen: `Automatisch aus Hochzeit übergeben.${h.notizen ? "\n" + h.notizen : ""}`,
@@ -806,14 +859,15 @@ export default function App() {
           <div style={{ marginBottom: 18 }}>
             <StudioOccupancyWidget jobs={openJobs} onOpen={j => setJobModal({ mode: "edit", job: j })} />
           </div>
-          {fotoView !== "equipment" && <SearchBox value={fotoSearch} onChange={setFotoSearch} placeholder="Suche nach Name, Kontakt, Notiz, Person…" />}
-          {fotoView !== "equipment" && <PersonFilterChips team={team} value={fotoPersonFilter} onChange={setFotoPersonFilter} accent={BEREICH_BY_KEY.fotostudio.accent} />}
-          {fotoView !== "equipment" && <PersonFilterChips team={ORT_LIST} value={fotoOrtFilter} onChange={setFotoOrtFilter} accent={BEREICH_BY_KEY.fotostudio.accent} />}
-          {fotoView !== "equipment" && <PersonFilterChips team={Object.keys(PROJEKTTYP_CFG)} value={fotoTypFilter} onChange={setFotoTypFilter} accent={BEREICH_BY_KEY.fotostudio.accent} />}
+          {(fotoView === "liste" || fotoView === "board") && <SearchBox value={fotoSearch} onChange={setFotoSearch} placeholder="Suche nach Name, Kontakt, Notiz, Person…" />}
+          {(fotoView === "liste" || fotoView === "board") && <PersonFilterChips team={team} value={fotoPersonFilter} onChange={setFotoPersonFilter} accent={BEREICH_BY_KEY.fotostudio.accent} />}
+          {(fotoView === "liste" || fotoView === "board") && <PersonFilterChips team={ORT_LIST} value={fotoOrtFilter} onChange={setFotoOrtFilter} accent={BEREICH_BY_KEY.fotostudio.accent} />}
+          {(fotoView === "liste" || fotoView === "board") && <PersonFilterChips team={Object.keys(PROJEKTTYP_CFG)} value={fotoTypFilter} onChange={setFotoTypFilter} accent={BEREICH_BY_KEY.fotostudio.accent} />}
+          {(fotoView === "liste" || fotoView === "board" || fotoView === "archiv") && <PersonFilterChips team={STATUS_LIST} value={fotoStatusFilter} onChange={setFotoStatusFilter} accent={BEREICH_BY_KEY.fotostudio.accent} />}
 
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
             <div style={{ display: "flex", background: Z.panelAlt, borderRadius: 8, overflow: "hidden" }}>
-              {[["liste", "ti-list", "Liste"], ["board", "ti-layout-kanban", "Board"], ["equipment", "ti-tools", "Equipment"]].map(([key, icon, label]) => (
+              {[["liste", "ti-list", "Liste"], ["board", "ti-layout-kanban", "Board"], ["equipment", "ti-tools", "Equipment"], ["archiv", "ti-archive", "Archiv"]].map(([key, icon, label]) => (
                 <div key={key} onClick={() => setFotoView(key)}
                   style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 13px", cursor: "pointer", fontSize: 12.5, fontWeight: 700, background: fotoView === key ? Z.gold : "transparent", color: fotoView === key ? "#1A1A1A" : Z.textSoft }}>
                   <i className={`ti ${icon}`} style={{ fontSize: 14 }}></i>{label}
@@ -850,6 +904,14 @@ export default function App() {
           {fotoView === "equipment" && (
             <EquipmentView jobs={openJobs} onJobClick={j => setJobModal({ mode: "edit", job: j })} />
           )}
+          {fotoView === "archiv" && (
+            <ListPreview title="Abgeschlossene & archivierte Jobs" empty="Noch keine abgeschlossenen Jobs." accent={BEREICH_BY_KEY.fotostudio.accent}>
+              {visibleArchivedFotoJobs.map(j => (
+                <JobRow key={j.id} job={j} onOpen={() => setJobModal({ mode: "edit", job: j })} onAdvance={() => handleStatusAdvance(j)}
+                  onDuplicate={handleDuplicateJob} onArchive={handleArchiveJobRow} onDelete={handleDeleteJobRow} />
+              ))}
+            </ListPreview>
+          )}
           {fotoView === "liste" && (
             <ListPreview title="Offene Jobs" empty={fotoSearch ? "Keine Treffer für diese Suche." : "Keine offenen Jobs."} accent={BEREICH_BY_KEY.fotostudio.accent}>
               {visibleFotoJobs.map(j => (
@@ -878,10 +940,11 @@ export default function App() {
         {view === "grafik" && <BereichPage bereich={BEREICH_BY_KEY.grafik} loading={loading} onAdd={() => setGrafikJobModal({ mode: "new" })}>
           <SearchBox value={grafikSearch} onChange={setGrafikSearch} placeholder="Suche nach Name, Kontakt, Notiz, Person…" />
           <PersonFilterChips team={team} value={grafikPersonFilter} onChange={setGrafikPersonFilter} accent={BEREICH_BY_KEY.grafik.accent} />
+          <PersonFilterChips team={GRAFIK_STATUS_LIST} value={grafikStatusFilter} onChange={setGrafikStatusFilter} accent={BEREICH_BY_KEY.grafik.accent} />
 
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
             <div style={{ display: "flex", background: Z.panelAlt, borderRadius: 8, overflow: "hidden" }}>
-              {[["liste", "ti-list", "Liste"], ["board", "ti-layout-kanban", "Board"]].map(([key, icon, label]) => (
+              {[["liste", "ti-list", "Liste"], ["board", "ti-layout-kanban", "Board"], ["archiv", "ti-archive", "Archiv"]].map(([key, icon, label]) => (
                 <div key={key} onClick={() => setGrafikView(key)}
                   style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 13px", cursor: "pointer", fontSize: 12.5, fontWeight: 700, background: grafikView === key ? Z.gold : "transparent", color: grafikView === key ? "#1A1A1A" : Z.textSoft }}>
                   <i className={`ti ${icon}`} style={{ fontSize: 14 }}></i>{label}
@@ -906,9 +969,18 @@ export default function App() {
             )}
           </div>
 
-          {grafikView === "board" ? (
+          {grafikView === "board" && (
             <BoardView jobs={visibleGrafikJobs} groupBy={grafikGroupBy} onOpen={j => setGrafikJobModal({ mode: "edit", job: j })} onChangeGroup={(id, val) => handleChangeGroupValue(id, grafikGroupBy, val)} />
-          ) : (
+          )}
+          {grafikView === "archiv" && (
+            <ListPreview title="Archivierte Grafik-Jobs" empty="Noch keine archivierten Jobs." accent={BEREICH_BY_KEY.grafik.accent}>
+              {visibleArchivedGrafikJobs.map(j => (
+                <GrafikJobRow key={j.id} job={j} onOpen={() => setGrafikJobModal({ mode: "edit", job: j })} onAdvance={() => handleGrafikStatusAdvance(j)}
+                  onDuplicate={handleDuplicateJob} onArchive={handleArchiveJobRow} onDelete={handleDeleteJobRow} />
+              ))}
+            </ListPreview>
+          )}
+          {grafikView === "liste" && (
             <ListPreview title="Offene Grafik-Jobs" empty={grafikSearch ? "Keine Treffer für diese Suche." : "Keine offenen Jobs."} accent={BEREICH_BY_KEY.grafik.accent}>
               {visibleGrafikJobs.map(j => (
                 <GrafikJobRow key={j.id} job={j} onOpen={() => setGrafikJobModal({ mode: "edit", job: j })} onAdvance={() => handleGrafikStatusAdvance(j)}
@@ -967,6 +1039,7 @@ export default function App() {
         <JobFormModal mode={jobModal.mode} job={jobModal.job} team={team} onAiAction={applyAiAction} onChatJobsCreated={handleChatJobsCreated}
           onClose={() => setJobModal(null)}
           onSubmit={async (values) => { await handleSaveJob(values, jobModal.job?.id); setJobModal(null); }}
+          onHandoffToGrafik={async person => { await handleHandoffFotoToGrafik(jobModal.job, person); setJobModal(null); }}
           onDuplicate={handleDuplicateJob} onArchive={handleArchiveJobRow} onDelete={handleDeleteJobRow} />
       )}
 
@@ -1832,7 +1905,7 @@ function GrafikJobRow({ job, onOpen, onAdvance, onDuplicate, onArchive, onDelete
           {job.abgabe ? "AB " + fmtDate(job.abgabe) : fmtDate(job.date)}
         </div>
       )}
-      <RowMenu archived={job.status === "Archiviert"}
+      <RowMenu archived={job.status === "Abgeschlossen"}
         onDuplicate={() => onDuplicate(job)} onArchive={() => onArchive(job)} onDelete={() => onDelete(job)} />
     </div>
   );
@@ -2481,7 +2554,7 @@ function ChatCapture({ team, onCreated, bereich = "fotostudio" }) {
 // Eigenes, reicheres Formular (statt der generischen Schnelleingabe), da hier
 // die volle Fachlogik der alten Jobliste nachgebildet wird: Status-Pipeline,
 // Projekttyp/Kategorien, Personen-Zuordnung, Shooting-Zeitraum, Ort.
-function JobFormModal({ mode, job, team, onAiAction, onChatJobsCreated, onClose, onSubmit, onDuplicate, onArchive, onDelete }) {
+function JobFormModal({ mode, job, team, onAiAction, onChatJobsCreated, onClose, onSubmit, onDuplicate, onArchive, onDelete, onHandoffToGrafik }) {
   const [v, setV] = useState(() => mode === "edit" && job ? {
     ...splitName(job.name), status: job.status || "Neu", prio: job.prio || "Mittel", aufwand: job.aufwand || "Mittel",
     ort: job.ort || "Im Haus", personen: Array.isArray(job.personen) ? job.personen : [],
@@ -2563,6 +2636,16 @@ function JobFormModal({ mode, job, team, onAiAction, onChatJobsCreated, onClose,
       setError(e.message);
       setBusy(false);
     }
+  };
+
+  // Status "Kann bearbeitet werden" signalisiert, dass der Job bereit für
+  // die Übergabe an Grafik/Nachbearbeitung ist - Button analog zum
+  // Hochzeiten-Handoff (siehe QuickAddModal).
+  const [handoffPerson, setHandoffPerson] = useState("");
+  const [handoffBusy, setHandoffBusy] = useState(false);
+  const doHandoff = async () => {
+    setHandoffBusy(true);
+    try { await onHandoffToGrafik(handoffPerson); } finally { setHandoffBusy(false); }
   };
 
   const Row = ({ children }) => <div style={{ display: "flex", gap: 12 }}>{children}</div>;
@@ -2763,6 +2846,19 @@ function JobFormModal({ mode, job, team, onAiAction, onChatJobsCreated, onClose,
 
           {error && <div style={{ color: Z.danger, fontSize: 12.5 }}>{error}</div>}
         </div>
+        {mode === "edit" && job && v.status === "Kann bearbeitet werden" && (
+          <div style={{ padding: "0 18px 13px", flexShrink: 0, display: "flex", gap: 8 }}>
+            <select value={handoffPerson} onChange={e => setHandoffPerson(e.target.value)}
+              style={{ flex: 1, padding: "9px 11px", borderRadius: 9, border: `1.5px solid ${Z.border}`, background: Z.panelAlt, color: Z.text, fontSize: 13.5 }}>
+              <option value="">Person wählen…</option>
+              {(team || []).map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+            <div onClick={doHandoff}
+              style={{ display: "flex", alignItems: "center", gap: 7, padding: "9px 14px", borderRadius: 9, border: `1.5px solid ${BEREICH_BY_KEY.grafik.accent}`, cursor: handoffBusy ? "wait" : "pointer", fontSize: 13, fontWeight: 700, color: BEREICH_BY_KEY.grafik.accent, whiteSpace: "nowrap" }}>
+              <i className="ti ti-arrow-forward-up" style={{ fontSize: 15 }}></i>{handoffBusy ? "…" : "An Grafik übergeben"}
+            </div>
+          </div>
+        )}
         <div style={{ padding: "13px 18px", borderTop: `1px solid ${Z.border}`, display: "flex", gap: 10, flexShrink: 0 }}>
           <div onClick={onClose} style={{ flex: 1, padding: 12, borderRadius: 9, border: `1.5px solid ${Z.border}`, textAlign: "center", cursor: "pointer", fontSize: 14, fontWeight: 600, color: Z.textSoft }}>Abbrechen</div>
           <div onClick={handleSubmit} style={{ flex: 2, padding: 12, borderRadius: 9, background: Z.gold, color: "#1A1A1A", textAlign: "center", cursor: busy ? "wait" : "pointer", fontSize: 14, fontWeight: 700 }}>
@@ -2783,7 +2879,7 @@ function JobFormModal({ mode, job, team, onAiAction, onChatJobsCreated, onClose,
 // Agentur-Tools wie awork: Auftragsart, Zeitbudget, Zuständigkeit, Deadline).
 function GrafikJobFormModal({ mode, job, team, onChatJobsCreated, onClose, onSubmit, onDuplicate, onArchive, onDelete }) {
   const [v, setV] = useState(mode === "edit" && job ? {
-    ...splitName(job.name), status: job.status || "Neu", auftragsart: job.auftragsart || "Bildbearbeitung",
+    ...splitName(job.name), status: job.status || "Offen", auftragsart: job.auftragsart || "Bildbearbeitung",
     speicherort: job.speicherort || "", anzahl_fotos: job.anzahl_fotos ?? "", anzahl_videos: job.anzahl_videos ?? "",
     prio: job.prio || "Mittel", aufwand: job.aufwand || "Mittel",
     personen: Array.isArray(job.personen) ? job.personen : [], date: job.date || "", abgabe: job.abgabe || "",
@@ -2854,7 +2950,7 @@ function GrafikJobFormModal({ mode, job, team, onChatJobsCreated, onClose, onSub
           <div style={{ fontSize: 16, fontWeight: 700 }}>{mode === "edit" ? "Grafik-Job bearbeiten" : "Neuer Grafik-Job"}</div>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             {mode === "edit" && job && (
-              <RowMenu archived={job.status === "Archiviert"}
+              <RowMenu archived={job.status === "Abgeschlossen"}
                 onDuplicate={() => onDuplicate(job)}
                 onArchive={async () => { if (await onArchive(job)) onClose(); }}
                 onDelete={async () => { if (await onDelete(job)) onClose(); }} />
