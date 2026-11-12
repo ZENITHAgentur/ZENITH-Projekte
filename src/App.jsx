@@ -276,6 +276,10 @@ export default function App() {
   const [quickEditItem, setQuickEditItem] = useState(null);
   const [jobModal, setJobModal] = useState(null);
   const [grafikJobModal, setGrafikJobModal] = useState(null);
+  // Popup zur Übergabe an Grafik, sobald ein Foto/Video-Job auf "Kann
+  // bearbeitet werden" wechselt (Listen-Klick oder Formular-Speichern) -
+  // siehe HandoffToGrafikPopup.
+  const [handoffPopup, setHandoffPopup] = useState(null);
   const [addPickerOpen, setAddPickerOpen] = useState(false);
   const [fotoSearch, setFotoSearch] = useState("");
   const [grafikSearch, setGrafikSearch] = useState("");
@@ -577,6 +581,7 @@ export default function App() {
       if (error) throw error;
       setData(p => ({ ...p, fotostudioJobs: p.fotostudioJobs.map(j => j.id === existingId ? updated : j) }));
       if (updated.status === "Archiviert" && vorherigerStatus !== "Archiviert") notifyMocoArchive(updated);
+      if (updated.status === "Kann bearbeitet werden" && vorherigerStatus !== "Kann bearbeitet werden") setHandoffPopup(updated);
       const neuePersonen = (updated.personen || []).filter(p => !vorherigePersonen.includes(p));
       notifyTeamsBooking(neuePersonen, updated);
     } else {
@@ -590,6 +595,8 @@ export default function App() {
 
   // Status per Klick auf den Status-Pill in der Liste weiterschalten, ohne
   // das Formular öffnen zu müssen - deckt den häufigsten Alltags-Workflow ab.
+  // Landet der Job dabei auf "Kann bearbeitet werden", öffnet sich sofort
+  // das Übergabe-Popup (Person zuteilen -> An Grafik übergeben).
   const handleStatusAdvance = async (job) => {
     const idx = STATUS_LIST.indexOf(job.status);
     const next = STATUS_LIST[(idx + 1) % STATUS_LIST.length];
@@ -597,6 +604,7 @@ export default function App() {
     if (error) { console.error(error.message); return; }
     setData(p => ({ ...p, fotostudioJobs: p.fotostudioJobs.map(j => j.id === job.id ? updated : j) }));
     if (next === "Archiviert") notifyMocoArchive(updated);
+    if (next === "Kann bearbeitet werden") setHandoffPopup(updated);
   };
 
   // Speichert einen Grafik-/Nachbearbeitungs-Job - schlankere Fachlogik als
@@ -1056,8 +1064,14 @@ export default function App() {
         <JobFormModal mode={jobModal.mode} job={jobModal.job} team={team} onAiAction={applyAiAction} onChatJobsCreated={handleChatJobsCreated}
           onClose={() => setJobModal(null)}
           onSubmit={async (values) => { await handleSaveJob(values, jobModal.job?.id); setJobModal(null); }}
-          onHandoffToGrafik={async person => { await handleHandoffFotoToGrafik(jobModal.job, person); setJobModal(null); }}
+          onOpenHandoffPopup={() => { setHandoffPopup(jobModal.job); setJobModal(null); }}
           onDuplicate={handleDuplicateJob} onArchive={handleArchiveJobRow} onDelete={handleDeleteJobRow} />
+      )}
+
+      {handoffPopup && (
+        <HandoffToGrafikPopup job={handoffPopup} team={team}
+          onClose={() => setHandoffPopup(null)}
+          onHandoff={async person => { await handleHandoffFotoToGrafik(handoffPopup, person); setHandoffPopup(null); }} />
       )}
 
       {grafikJobModal && (
@@ -2567,11 +2581,63 @@ function ChatCapture({ team, onCreated, bereich = "fotostudio" }) {
   );
 }
 
+// ─── Übergabe-Popup Foto/Video → Grafik ────────────────────────────────────
+// Öffnet sich automatisch, sobald ein Foto/Video-Job auf "Kann bearbeitet
+// werden" wechselt (Status-Pill in der Liste oder Speichern im Formular) -
+// zeigt die wichtigsten Projekt-Infos und lässt direkt eine Person für den
+// neuen Grafik-Job zuteilen, ohne erst das volle Bearbeiten-Fenster zu öffnen.
+function HandoffToGrafikPopup({ job, team, onClose, onHandoff }) {
+  const [person, setPerson] = useState("");
+  const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    setBusy(true);
+    try { await onHandoff(person); } finally { setBusy(false); }
+  };
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 70, display: "flex", alignItems: "flex-end", justifyContent: "center" }}
+      onClick={e => e.target === e.currentTarget && onClose()}>
+      <div style={{ background: Z.panel, border: `1px solid ${Z.border}`, borderBottom: "none", width: "100%", maxWidth: 440, borderRadius: "16px 16px 0 0" }}>
+        <div style={{ padding: "16px 18px", borderBottom: `1px solid ${Z.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+            <i className="ti ti-arrow-forward-up" style={{ fontSize: 18, color: BEREICH_BY_KEY.grafik.accent }}></i>
+            <div style={{ fontSize: 16, fontWeight: 700 }}>An Grafik übergeben</div>
+          </div>
+          <i className="ti ti-x" onClick={onClose} style={{ fontSize: 18, color: Z.textSoft, cursor: "pointer" }}></i>
+        </div>
+        <div style={{ padding: "16px 18px", display: "flex", flexDirection: "column", gap: 10 }}>
+          <div style={{ fontSize: 15, fontWeight: 700 }}>{job.name}</div>
+          {(job.date || job.kontakt || job.notizen) && (
+            <div style={{ fontSize: 12.5, color: Z.textSoft, display: "flex", flexDirection: "column", gap: 4 }}>
+              {job.date && <div><i className="ti ti-calendar" style={{ fontSize: 13, marginRight: 5 }}></i>{fmtDate(job.date)}</div>}
+              {job.kontakt && <div><i className="ti ti-user" style={{ fontSize: 13, marginRight: 5 }}></i>{job.kontakt}</div>}
+              {job.notizen && <div style={{ whiteSpace: "pre-wrap" }}><i className="ti ti-notes" style={{ fontSize: 13, marginRight: 5 }}></i>{job.notizen}</div>}
+            </div>
+          )}
+          <div>
+            <FieldLabel>Zuständige Person in Grafik</FieldLabel>
+            <select value={person} onChange={e => setPerson(e.target.value)}
+              style={{ width: "100%", padding: "9px 11px", borderRadius: 9, border: `1.5px solid ${Z.border}`, background: Z.panelAlt, color: Z.text, fontSize: 14 }}>
+              <option value="">Person wählen…</option>
+              {(team || []).map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </div>
+        </div>
+        <div style={{ padding: "13px 18px", borderTop: `1px solid ${Z.border}`, display: "flex", gap: 10 }}>
+          <div onClick={onClose} style={{ flex: 1, padding: 12, borderRadius: 9, border: `1.5px solid ${Z.border}`, textAlign: "center", cursor: "pointer", fontSize: 14, fontWeight: 600, color: Z.textSoft }}>Später</div>
+          <div onClick={submit} style={{ flex: 2, padding: 12, borderRadius: 9, background: BEREICH_BY_KEY.grafik.accent, color: "#0C0C0D", textAlign: "center", cursor: busy ? "wait" : "pointer", fontSize: 14, fontWeight: 700 }}>
+            {busy ? "Übergibt…" : "An Grafik übergeben"}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Foto-/Video-Job: Neuanlage & Bearbeitung ──────────────────────────────
 // Eigenes, reicheres Formular (statt der generischen Schnelleingabe), da hier
 // die volle Fachlogik der alten Jobliste nachgebildet wird: Status-Pipeline,
 // Projekttyp/Kategorien, Personen-Zuordnung, Shooting-Zeitraum, Ort.
-function JobFormModal({ mode, job, team, onAiAction, onChatJobsCreated, onClose, onSubmit, onDuplicate, onArchive, onDelete, onHandoffToGrafik }) {
+function JobFormModal({ mode, job, team, onAiAction, onChatJobsCreated, onClose, onSubmit, onDuplicate, onArchive, onDelete, onOpenHandoffPopup }) {
   const [v, setV] = useState(() => mode === "edit" && job ? {
     ...splitName(job.name), status: job.status || "Neu", prio: job.prio || "Mittel", aufwand: job.aufwand || "Mittel",
     ort: job.ort || "Im Haus", personen: Array.isArray(job.personen) ? job.personen : [],
@@ -2653,16 +2719,6 @@ function JobFormModal({ mode, job, team, onAiAction, onChatJobsCreated, onClose,
       setError(e.message);
       setBusy(false);
     }
-  };
-
-  // Status "Kann bearbeitet werden" signalisiert, dass der Job bereit für
-  // die Übergabe an Grafik/Nachbearbeitung ist - Button analog zum
-  // Hochzeiten-Handoff (siehe QuickAddModal).
-  const [handoffPerson, setHandoffPerson] = useState("");
-  const [handoffBusy, setHandoffBusy] = useState(false);
-  const doHandoff = async () => {
-    setHandoffBusy(true);
-    try { await onHandoffToGrafik(handoffPerson); } finally { setHandoffBusy(false); }
   };
 
   const Row = ({ children }) => <div style={{ display: "flex", gap: 12 }}>{children}</div>;
@@ -2864,15 +2920,10 @@ function JobFormModal({ mode, job, team, onAiAction, onChatJobsCreated, onClose,
           {error && <div style={{ color: Z.danger, fontSize: 12.5 }}>{error}</div>}
         </div>
         {mode === "edit" && job && v.status === "Kann bearbeitet werden" && (
-          <div style={{ padding: "0 18px 13px", flexShrink: 0, display: "flex", gap: 8 }}>
-            <select value={handoffPerson} onChange={e => setHandoffPerson(e.target.value)}
-              style={{ flex: 1, padding: "9px 11px", borderRadius: 9, border: `1.5px solid ${Z.border}`, background: Z.panelAlt, color: Z.text, fontSize: 13.5 }}>
-              <option value="">Person wählen…</option>
-              {(team || []).map(t => <option key={t} value={t}>{t}</option>)}
-            </select>
-            <div onClick={doHandoff}
-              style={{ display: "flex", alignItems: "center", gap: 7, padding: "9px 14px", borderRadius: 9, border: `1.5px solid ${BEREICH_BY_KEY.grafik.accent}`, cursor: handoffBusy ? "wait" : "pointer", fontSize: 13, fontWeight: 700, color: BEREICH_BY_KEY.grafik.accent, whiteSpace: "nowrap" }}>
-              <i className="ti ti-arrow-forward-up" style={{ fontSize: 15 }}></i>{handoffBusy ? "…" : "An Grafik übergeben"}
+          <div style={{ padding: "0 18px 13px", flexShrink: 0 }}>
+            <div onClick={onOpenHandoffPopup}
+              style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 7, padding: 11, borderRadius: 9, border: `1.5px solid ${BEREICH_BY_KEY.grafik.accent}`, cursor: "pointer", fontSize: 13, fontWeight: 700, color: BEREICH_BY_KEY.grafik.accent }}>
+              <i className="ti ti-arrow-forward-up" style={{ fontSize: 15 }}></i>An Grafik übergeben
             </div>
           </div>
         )}
